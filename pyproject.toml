@@ -1,0 +1,27 @@
+[project]
+name = "dino"
+version = "0.1.0"
+description = "Spatial Intelligence for Restaurant Operations — visual processing pipeline"
+readme = "README.md"
+authors = [
+    { name = "HengWoo", email = "heng.woo@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "torch",
+    "torchvision",
+    "transformers",
+    "supervision",
+    "opencv-python",
+    "Pillow",
+    "numpy",
+    "accelerate",
+]
+
+[project.optional-dependencies]
+yolo = ["ultralytics"]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

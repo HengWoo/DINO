@@ -19,10 +19,11 @@ uv.lock
 *.onnx
 *.bin
 
-# Data
-data/videos/
-data/output/
-data/samples/
+# Data (ignore contents, keep dirs via .gitkeep)
+data/videos/*
+data/output/*
+data/samples/*
+!data/**/.gitkeep
 
 # IDE
 .idea/
