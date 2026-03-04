@@ -24,20 +24,16 @@ def _make_test_video(path: str, num_frames: int = 10, fps: int = 30):
 
 
 class TestPipelineConfig:
-    def test_default_values(self):
-        config = PipelineConfig()
-        assert config.prompts == []
-        assert config.box_threshold == 0.3
-        assert config.stride == 1
+    def test_default_prompts_required(self):
+        with pytest.raises(ValueError, match="prompts must not be empty"):
+            PipelineConfig()
 
     def test_custom_values(self):
         config = PipelineConfig(
             prompts=["person", "table"],
-            box_threshold=0.5,
             stride=3,
         )
         assert config.prompts == ["person", "table"]
-        assert config.box_threshold == 0.5
         assert config.stride == 3
 
     def test_invalid_stride_zero(self):
@@ -48,9 +44,9 @@ class TestPipelineConfig:
         with pytest.raises(ValueError, match="stride must be >= 1"):
             PipelineConfig(prompts=["person"], stride=-1)
 
-    def test_invalid_box_threshold(self):
-        with pytest.raises(ValueError, match="box_threshold must be in"):
-            PipelineConfig(prompts=["person"], box_threshold=5.0)
+    def test_empty_prompts_rejected(self):
+        with pytest.raises(ValueError, match="prompts must not be empty"):
+            PipelineConfig(prompts=[])
 
 
 class TestVideoPipeline:
@@ -158,3 +154,28 @@ class TestVideoPipeline:
         result = VideoPipeline._detections_to_dict(0, detections)
         det = result["detections"][0]
         assert "bbox" in det
+
+    def test_input_not_found_raises(self, tmp_path):
+        mock_detector = MagicMock()
+        config = PipelineConfig(prompts=["person"])
+        pipeline = VideoPipeline(detector=mock_detector, config=config)
+
+        with pytest.raises(FileNotFoundError, match="Input video not found"):
+            pipeline.run(str(tmp_path / "nonexistent.mp4"), str(tmp_path / "out.mp4"))
+
+    def test_progress_callback_called(self, tmp_path):
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        _make_test_video(input_path, num_frames=3)
+
+        mock_detector = MagicMock()
+        mock_detector.detect.return_value = sv.Detections.empty()
+
+        config = PipelineConfig(prompts=["person"])
+        pipeline = VideoPipeline(detector=mock_detector, config=config)
+
+        calls = []
+        pipeline.run(input_path, output_path, progress_callback=lambda p, t: calls.append((p, t)))
+
+        assert len(calls) == 3
+        assert calls[-1][0] == 3  # processed count

@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 import supervision as sv
 
-from dino.detectors.base import BaseDetector
 from dino.detectors.grounding_dino import GroundingDINODetector
 
 
@@ -47,19 +46,6 @@ def _setup_mocks(mock_model_cls, mock_proc_cls, boxes, scores, labels):
         }
     ]
     return mock_processor, mock_model
-
-
-class TestBaseDetector:
-    def test_cannot_instantiate_directly(self):
-        with pytest.raises(TypeError):
-            BaseDetector()
-
-    def test_subclass_must_implement_detect(self):
-        class BadDetector(BaseDetector):
-            pass
-
-        with pytest.raises(TypeError):
-            BadDetector()
 
 
 class TestGroundingDINODetector:
@@ -122,17 +108,6 @@ class TestGroundingDINODetector:
 
     @patch("dino.detectors.grounding_dino.AutoProcessor")
     @patch("dino.detectors.grounding_dino.AutoModelForZeroShotObjectDetection")
-    def test_is_base_detector_subclass(self, mock_model_cls, mock_proc_cls):
-        mock_proc_cls.from_pretrained.return_value = MagicMock()
-        mock_model = MagicMock()
-        mock_model.to.return_value = mock_model
-        mock_model_cls.from_pretrained.return_value = mock_model
-
-        detector = GroundingDINODetector(device="cpu")
-        assert isinstance(detector, BaseDetector)
-
-    @patch("dino.detectors.grounding_dino.AutoProcessor")
-    @patch("dino.detectors.grounding_dino.AutoModelForZeroShotObjectDetection")
     def test_multiple_detections(self, mock_model_cls, mock_proc_cls):
         _setup_mocks(
             mock_model_cls,
@@ -163,3 +138,52 @@ class TestGroundingDINODetector:
 
     def test_label_to_class_id_exact_preferred_over_containment(self):
         assert GroundingDINODetector._label_to_class_id("table", ["empty table", "table"]) == 1
+
+    def test_label_to_class_id_bidirectional_containment(self):
+        # "person sitting at table" contains "table" — prompt-in-label direction
+        assert GroundingDINODetector._label_to_class_id(
+            "person sitting at table", ["table"]
+        ) == 0
+
+    @patch("dino.detectors.grounding_dino.AutoProcessor")
+    @patch("dino.detectors.grounding_dino.AutoModelForZeroShotObjectDetection")
+    def test_detect_rejects_none_frame(self, mock_model_cls, mock_proc_cls):
+        mock_proc_cls.from_pretrained.return_value = MagicMock()
+        mock_model = MagicMock()
+        mock_model.to.return_value = mock_model
+        mock_model_cls.from_pretrained.return_value = mock_model
+
+        detector = GroundingDINODetector(device="cpu")
+        with pytest.raises(ValueError, match="frame must not be None"):
+            detector.detect(None, ["person"])
+
+    @patch("dino.detectors.grounding_dino.AutoProcessor")
+    @patch("dino.detectors.grounding_dino.AutoModelForZeroShotObjectDetection")
+    def test_detect_rejects_grayscale_frame(self, mock_model_cls, mock_proc_cls):
+        mock_proc_cls.from_pretrained.return_value = MagicMock()
+        mock_model = MagicMock()
+        mock_model.to.return_value = mock_model
+        mock_model_cls.from_pretrained.return_value = mock_model
+
+        detector = GroundingDINODetector(device="cpu")
+        frame = np.zeros((480, 640), dtype=np.uint8)
+        with pytest.raises(ValueError, match="3-channel image"):
+            detector.detect(frame, ["person"])
+
+    @patch("dino.detectors.grounding_dino.AutoProcessor")
+    @patch("dino.detectors.grounding_dino.AutoModelForZeroShotObjectDetection")
+    def test_detect_rejects_empty_prompts(self, mock_model_cls, mock_proc_cls):
+        mock_proc_cls.from_pretrained.return_value = MagicMock()
+        mock_model = MagicMock()
+        mock_model.to.return_value = mock_model
+        mock_model_cls.from_pretrained.return_value = mock_model
+
+        detector = GroundingDINODetector(device="cpu")
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        with pytest.raises(ValueError, match="prompts must not be empty"):
+            detector.detect(frame, [])
+
+    @patch("dino.detectors.grounding_dino._available_devices", return_value={"cpu"})
+    def test_invalid_device_raises(self, _):
+        with pytest.raises(ValueError, match="not available"):
+            GroundingDINODetector(device="cuda")

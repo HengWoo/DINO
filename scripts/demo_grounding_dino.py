@@ -3,10 +3,11 @@
 
 import argparse
 import sys
+import traceback
 
 import cv2
-import supervision as sv
 
+from dino.annotation.annotator import FrameAnnotator
 from dino.detectors.grounding_dino import GroundingDINODetector
 
 DEFAULT_PROMPTS = ["person", "empty table", "plate of food", "chair"]
@@ -48,17 +49,8 @@ def main():
             print(f"  [{i}] {label} ({conf:.2f}) at [{box[0]:.0f}, {box[1]:.0f}, {box[2]:.0f}, {box[3]:.0f}]")
 
         if args.output:
-            box_annotator = sv.BoxAnnotator()
-            label_annotator = sv.LabelAnnotator()
-            labels = [
-                f"{detections.data['class_name'][i] if 'class_name' in detections.data else 'unknown'} "
-                f"{detections.confidence[i]:.2f}"
-                for i in range(len(detections))
-            ]
-            annotated = box_annotator.annotate(scene=frame.copy(), detections=detections)
-            annotated = label_annotator.annotate(
-                scene=annotated, detections=detections, labels=labels
-            )
+            annotator = FrameAnnotator()
+            annotated = annotator.annotate(frame, detections)
             if not cv2.imwrite(args.output, annotated):
                 print(f"Error: failed to write image to '{args.output}'", file=sys.stderr)
                 sys.exit(1)
@@ -67,8 +59,14 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
         sys.exit(130)
-    except Exception as e:
+    except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except (RuntimeError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception:
+        traceback.print_exc()
         sys.exit(1)
 
 

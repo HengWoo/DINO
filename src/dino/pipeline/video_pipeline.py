@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from dino.annotation.annotator import FrameAnnotator
 from dino.config import PipelineConfig
 from dino.detectors.base import BaseDetector
 from dino.tracking.tracker import ObjectTracker
+
+logger = logging.getLogger(__name__)
 
 
 class VideoPipeline:
@@ -46,19 +49,32 @@ class VideoPipeline:
         Returns:
             List of per-frame result dicts.
         """
+        input_p = Path(input_path)
+        if not input_p.exists():
+            raise FileNotFoundError(f"Input video not found: {input_path}")
+
+        output_p = Path(output_path)
+        output_p.parent.mkdir(parents=True, exist_ok=True)
+
         video_info = sv.VideoInfo.from_video_path(input_path)
-        if self.config.stride > 1:
-            video_info.fps = video_info.fps / self.config.stride
+        adjusted_fps = video_info.fps / self.config.stride if self.config.stride > 1 else video_info.fps
+        output_info = sv.VideoInfo(
+            width=video_info.width,
+            height=video_info.height,
+            fps=adjusted_fps,
+            total_frames=video_info.total_frames,
+        )
         frame_generator = sv.get_video_frames_generator(input_path)
 
-        total_frames = video_info.total_frames // self.config.stride
+        total_frames = max(1, video_info.total_frames // self.config.stride)
 
         sbs_info = None
         if sbs_output:
+            Path(sbs_output).parent.mkdir(parents=True, exist_ok=True)
             sbs_info = sv.VideoInfo(
                 width=video_info.width * 2,
                 height=video_info.height,
-                fps=video_info.fps,
+                fps=adjusted_fps,
                 total_frames=video_info.total_frames,
             )
 
@@ -66,7 +82,7 @@ class VideoPipeline:
         processed = 0
 
         with contextlib.ExitStack() as stack:
-            sink = stack.enter_context(sv.VideoSink(output_path, video_info))
+            sink = stack.enter_context(sv.VideoSink(output_path, output_info))
             sbs_sink = None
             if sbs_output and sbs_info:
                 sbs_sink = stack.enter_context(sv.VideoSink(sbs_output, sbs_info))
@@ -75,15 +91,20 @@ class VideoPipeline:
                 if frame_idx % self.config.stride != 0:
                     continue
 
-                detections = self.detector.detect(frame, self.config.prompts)
-                detections = self.tracker.update(detections)
+                try:
+                    detections = self.detector.detect(frame, self.config.prompts)
+                    detections = self.tracker.update(detections)
 
-                annotated = self.annotator.annotate(frame, detections)
-                sink.write_frame(annotated)
+                    annotated = self.annotator.annotate(frame, detections)
+                    sink.write_frame(annotated)
 
-                if sbs_sink is not None:
-                    sbs_frame = np.hstack([frame, annotated])
-                    sbs_sink.write_frame(sbs_frame)
+                    if sbs_sink is not None:
+                        sbs_frame = np.hstack([frame, annotated])
+                        sbs_sink.write_frame(sbs_frame)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Error processing frame {frame_idx}: {e}"
+                    ) from e
 
                 frame_result = self._detections_to_dict(frame_idx, detections)
                 results.append(frame_result)
@@ -109,11 +130,11 @@ class VideoPipeline:
             }
             if detections.confidence is not None:
                 det["confidence"] = float(detections.confidence[i])
-            if detections.class_id is not None and len(detections.class_id) > i:
+            if detections.class_id is not None:
                 det["class_id"] = int(detections.class_id[i])
-            if detections.tracker_id is not None and len(detections.tracker_id) > i:
+            if detections.tracker_id is not None:
                 det["tracker_id"] = int(detections.tracker_id[i])
-            if "class_name" in detections.data and len(detections.data["class_name"]) > i:
+            if "class_name" in detections.data:
                 det["class_name"] = str(detections.data["class_name"][i])
             det_list.append(det)
 
