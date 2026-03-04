@@ -128,6 +128,20 @@ class TestLoadZonesFile:
         with pytest.raises(ValueError, match="invalid JSON"):
             load_zones_file(path)
 
+    def test_invalid_polygon_too_few_vertices(self, tmp_path):
+        from dino.zones.loader import load_zones_file
+
+        zones_data = {
+            "zones": [
+                {"zone_id": "z1", "name": "Bad Zone", "polygon": [[0, 0], [100, 0]]},
+            ],
+        }
+        path = tmp_path / "zones.json"
+        path.write_text(json.dumps(zones_data))
+
+        with pytest.raises(ValueError, match="Invalid zone entry 0"):
+            load_zones_file(path)
+
 
 class TestZoneAnnotator:
     def _make_zone(self, zone_id="z1", name="Test Zone"):
@@ -550,19 +564,3 @@ class TestSpatialPipeline:
         )
         with pytest.raises(ValueError, match="Invalid inline rule at index 0"):
             SpatialPipeline(detector, config, spatial_config)
-
-
-class TestLoadZonesFileEdgeCases:
-    def test_invalid_polygon_too_few_vertices(self, tmp_path):
-        from dino.zones.loader import load_zones_file
-
-        zones_data = {
-            "zones": [
-                {"zone_id": "z1", "name": "Bad Zone", "polygon": [[0, 0], [100, 0]]},
-            ],
-        }
-        path = tmp_path / "zones.json"
-        path.write_text(json.dumps(zones_data))
-
-        with pytest.raises(ValueError, match="Invalid zone entry 0"):
-            load_zones_file(path)

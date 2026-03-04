@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -140,10 +141,10 @@ class SpatialPipeline:
             )
         adjusted_fps = (
             video_info.fps / self.config.stride
-            if self.config.stride > 1 and video_info.fps > 0
+            if self.config.stride > 1
             else video_info.fps
         )
-        total_frames = max(1, video_info.total_frames // self.config.stride)
+        total_frames = max(1, math.ceil(video_info.total_frames / self.config.stride))
         output_info = sv.VideoInfo(
             width=video_info.width,
             height=video_info.height,
@@ -207,9 +208,11 @@ class SpatialPipeline:
                     )
                 tmp_path.replace(json_path)
             except (TypeError, OSError) as e:
-                logger.error("Failed to write JSON results to %s: %s", json_output, e)
                 if tmp_path.exists():
                     tmp_path.unlink()
+                raise RuntimeError(
+                    f"Failed to write JSON results to {json_output}: {e}"
+                ) from e
 
         return results
 
