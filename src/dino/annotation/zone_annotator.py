@@ -47,8 +47,6 @@ class ZoneAnnotator:
         if not zones:
             return annotated
 
-        overlay = annotated.copy()
-
         for zone in zones:
             polygon_pts = zone.polygon[:, :2].astype(np.int32)
 
@@ -62,26 +60,23 @@ class ZoneAnnotator:
 
             color = self.active_color if is_active else self.zone_color
 
-            # Fill polygon on overlay
-            cv2.fillPoly(overlay, [polygon_pts], color)
-
-            # Blend overlay with annotated frame
-            annotated = cv2.addWeighted(overlay, self.alpha, annotated, 1 - self.alpha, 0)
-            # Reset overlay for next zone
+            # Fill polygon on fresh overlay, then blend
             overlay = annotated.copy()
+            cv2.fillPoly(overlay, [polygon_pts], color)
+            annotated = cv2.addWeighted(overlay, self.alpha, annotated, 1 - self.alpha, 0)
 
             # Draw outline
             cv2.polylines(annotated, [polygon_pts], isClosed=True, color=color, thickness=2)
 
             # Draw label
-            centroid = polygon_pts.mean(axis=0).astype(int)
+            centroid = tuple(int(v) for v in polygon_pts.mean(axis=0))
             label = zone.name
             if is_active:
                 label += f" ({object_count})"
             cv2.putText(
                 annotated,
                 label,
-                tuple(centroid),
+                centroid,
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
                 color,
