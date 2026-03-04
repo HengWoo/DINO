@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 from dino.spatial.models import WorldObject
+
+logger = logging.getLogger(__name__)
 
 
 class SpatialObjectRegistry:
@@ -17,6 +21,10 @@ class SpatialObjectRegistry:
         match_distance: float = 50.0,
         max_age_seconds: float = 30.0,
     ):
+        if match_distance <= 0:
+            raise ValueError(f"match_distance must be positive, got {match_distance}")
+        if max_age_seconds <= 0:
+            raise ValueError(f"max_age_seconds must be positive, got {max_age_seconds}")
         self.match_distance = match_distance
         self.max_age_seconds = max_age_seconds
         self._next_id: int = 0
@@ -41,11 +49,19 @@ class SpatialObjectRegistry:
             if pid in self._objects:
                 return self._update(obj, pid)
             # Stale mapping — fall through to slow path
+            logger.debug(
+                "Stale tracker mapping: tracker_id=%d -> persistent_id=%d (evicted)",
+                obj.tracker_id, pid,
+            )
             del self._tracker_to_persistent[obj.tracker_id]
 
         # Slow path: proximity match
         best_pid = self._find_nearest(obj)
         if best_pid is not None:
+            logger.debug(
+                "Proximity re-ID: tracker_id=%d -> persistent_id=%d",
+                obj.tracker_id, best_pid,
+            )
             self._tracker_to_persistent[obj.tracker_id] = best_pid
             return self._update(obj, best_pid)
 
@@ -53,6 +69,10 @@ class SpatialObjectRegistry:
         pid = self._next_id
         self._next_id += 1
         self._tracker_to_persistent[obj.tracker_id] = pid
+        logger.debug(
+            "New object: tracker_id=%d -> persistent_id=%d (%s)",
+            obj.tracker_id, pid, obj.class_name,
+        )
         return self._update(obj, pid)
 
     def _update(self, obj: WorldObject, persistent_id: int) -> WorldObject:
@@ -78,10 +98,15 @@ class SpatialObjectRegistry:
             for pid, obj in self._objects.items()
             if current_time - obj.timestamp > self.max_age_seconds
         ]
+        if not stale:
+            return
+        stale_set = set(stale)
         for pid in stale:
+            logger.debug("Evicting persistent_id=%d (aged out)", pid)
             del self._objects[pid]
-            self._tracker_to_persistent = {
-                tid: p
-                for tid, p in self._tracker_to_persistent.items()
-                if p != pid
-            }
+        # Single-pass cleanup of tracker mappings
+        self._tracker_to_persistent = {
+            tid: p
+            for tid, p in self._tracker_to_persistent.items()
+            if p not in stale_set
+        }

@@ -47,6 +47,17 @@ class TestQuaternionToRotationMatrix:
         np.testing.assert_array_almost_equal(R @ R.T, np.eye(3), decimal=6)
         assert abs(np.linalg.det(R) - 1.0) < 1e-6
 
+    def test_zero_quaternion_raises(self):
+        q = np.array([0.0, 0.0, 0.0, 0.0])
+        with pytest.raises(ValueError, match="near-zero norm"):
+            quaternion_to_rotation_matrix(q)
+
+    def test_unnormalized_quaternion_still_valid(self):
+        """Non-unit quaternion should be auto-normalized."""
+        q = np.array([2.0, 0.0, 0.0, 0.0])  # scale of 2
+        R = quaternion_to_rotation_matrix(q)
+        np.testing.assert_array_almost_equal(R, np.eye(3))
+
 
 class TestBackprojectPixelToCamera:
     def test_principal_point_at_unit_depth(self):
@@ -70,6 +81,20 @@ class TestBackprojectPixelToCamera:
         p1 = backproject_pixel_to_camera(420.0, 340.0, 1.0, intrinsics)
         p2 = backproject_pixel_to_camera(420.0, 340.0, 2.0, intrinsics)
         np.testing.assert_array_almost_equal(p2[:2], p1[:2] * 2.0)
+
+    def test_zero_depth_raises(self):
+        intrinsics = CameraIntrinsics(
+            fx=500.0, fy=500.0, cx=320.0, cy=240.0, width=640, height=480
+        )
+        with pytest.raises(ValueError, match="depth must be positive"):
+            backproject_pixel_to_camera(320.0, 240.0, 0.0, intrinsics)
+
+    def test_negative_depth_raises(self):
+        intrinsics = CameraIntrinsics(
+            fx=500.0, fy=500.0, cx=320.0, cy=240.0, width=640, height=480
+        )
+        with pytest.raises(ValueError, match="depth must be positive"):
+            backproject_pixel_to_camera(320.0, 240.0, -1.0, intrinsics)
 
 
 class TestCameraToWorld:

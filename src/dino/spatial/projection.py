@@ -6,7 +6,18 @@ from dino.spatial.models import CameraIntrinsics, CameraPose
 
 
 def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
-    """Convert quaternion [w, x, y, z] to 3x3 rotation matrix."""
+    """Convert quaternion [w, x, y, z] to 3x3 rotation matrix.
+
+    The quaternion is normalized before conversion to ensure a valid
+    rotation matrix even if the input is not exactly unit length.
+
+    Raises:
+        ValueError: If the quaternion has near-zero norm.
+    """
+    norm = float(np.linalg.norm(q))
+    if norm < 1e-10:
+        raise ValueError(f"quaternion has near-zero norm ({norm})")
+    q = q / norm
     w, x, y, z = q
     return np.array([
         [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -25,6 +36,8 @@ def backproject_pixel_to_camera(
     Returns:
         (3,) array [X, Y, Z] in camera frame.
     """
+    if depth <= 0:
+        raise ValueError(f"depth must be positive, got {depth}")
     x = (u - intrinsics.cx) * depth / intrinsics.fx
     y = (v - intrinsics.cy) * depth / intrinsics.fy
     z = depth

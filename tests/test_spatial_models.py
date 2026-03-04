@@ -61,6 +61,18 @@ class TestCameraIntrinsics:
         with pytest.raises(AttributeError):
             intrinsics.fx = 600.0
 
+    def test_zero_focal_length_raises(self):
+        with pytest.raises(ValueError, match="focal lengths"):
+            CameraIntrinsics(fx=0, fy=500.0, cx=320.0, cy=240.0, width=640, height=480)
+
+    def test_negative_focal_length_raises(self):
+        with pytest.raises(ValueError, match="focal lengths"):
+            CameraIntrinsics(fx=-1, fy=500.0, cx=320.0, cy=240.0, width=640, height=480)
+
+    def test_zero_dimensions_raises(self):
+        with pytest.raises(ValueError, match="dimensions"):
+            CameraIntrinsics(fx=500.0, fy=500.0, cx=320.0, cy=240.0, width=0, height=480)
+
 
 class TestCameraPose:
     def test_construction(self):
@@ -80,3 +92,19 @@ class TestCameraPose:
             frame_idx=0,
         )
         assert pose.timestamp == 0.0
+
+    def test_bad_translation_shape_raises(self):
+        with pytest.raises(ValueError, match="translation"):
+            CameraPose(
+                translation=np.zeros(4),
+                rotation=np.eye(3),
+                frame_idx=0,
+            )
+
+    def test_bad_rotation_shape_raises(self):
+        with pytest.raises(ValueError, match="rotation"):
+            CameraPose(
+                translation=np.zeros(3),
+                rotation=np.eye(4),
+                frame_idx=0,
+            )
