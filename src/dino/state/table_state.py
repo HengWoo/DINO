@@ -1,4 +1,9 @@
+from __future__ import annotations
+
+import logging
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class TableState(Enum):
@@ -23,7 +28,7 @@ class TableStateMachine:
         self._hysteresis = hysteresis
         self._pending_state: TableState | None = None
         self._pending_count: int = 0
-        self._history: list[dict] = [{"state": TableState.EMPTY, "frame_number": 0}]
+        self._history: list[dict] = [{"state": TableState.EMPTY.value, "frame_number": 0}]
 
     @property
     def state(self) -> TableState:
@@ -40,8 +45,12 @@ class TableStateMachine:
             return self._state
 
         if observed_state not in VALID_TRANSITIONS.get(self._state, set()):
-            self._pending_state = None
-            self._pending_count = 0
+            logger.debug(
+                "Table %s: rejected transition %s -> %s",
+                self.table_id,
+                self._state.value,
+                observed_state.value,
+            )
             return self._state
 
         if observed_state == self._pending_state:
@@ -52,7 +61,7 @@ class TableStateMachine:
 
         if self._pending_count >= self._hysteresis:
             self._state = observed_state
-            self._history.append({"state": observed_state, "frame_number": frame_number})
+            self._history.append({"state": observed_state.value, "frame_number": frame_number})
             self._pending_state = None
             self._pending_count = 0
 

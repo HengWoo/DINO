@@ -1,13 +1,6 @@
-import pytest
+import json
+
 from dino.state.table_state import TableState, TableStateMachine
-
-
-class TestTableState:
-    def test_states_exist(self):
-        assert TableState.EMPTY is not None
-        assert TableState.OCCUPIED is not None
-        assert TableState.SERVED is not None
-        assert TableState.CLEARING is not None
 
 
 class TestTableStateMachine:
@@ -60,13 +53,22 @@ class TestTableStateMachine:
         fsm.update(TableState.OCCUPIED)
         assert fsm.state == TableState.OCCUPIED
 
-    def test_hysteresis_resets_on_different_state(self):
+    def test_hysteresis_resets_on_same_state(self):
         fsm = TableStateMachine(table_id="T1", hysteresis=3)
         fsm.update(TableState.OCCUPIED)
         fsm.update(TableState.OCCUPIED)
-        fsm.update(TableState.EMPTY)  # resets counter
+        fsm.update(TableState.EMPTY)  # same as current state, resets counter
         fsm.update(TableState.OCCUPIED)
         assert fsm.state == TableState.EMPTY
+
+    def test_invalid_transition_does_not_reset_pending(self):
+        """An invalid observation should not disrupt a valid pending sequence."""
+        fsm = TableStateMachine(table_id="T1", hysteresis=3)
+        fsm.update(TableState.OCCUPIED)   # pending=OCC, count=1
+        fsm.update(TableState.OCCUPIED)   # pending=OCC, count=2
+        fsm.update(TableState.SERVED)     # invalid from EMPTY, ignored — pending preserved
+        fsm.update(TableState.OCCUPIED)   # pending=OCC, count=3 → transition
+        assert fsm.state == TableState.OCCUPIED
 
     def test_history_recording(self):
         fsm = TableStateMachine(table_id="T1", hysteresis=1)
@@ -74,9 +76,9 @@ class TestTableStateMachine:
         fsm.update(TableState.SERVED)
         history = fsm.history
         assert len(history) == 3
-        assert history[0]["state"] == TableState.EMPTY
-        assert history[1]["state"] == TableState.OCCUPIED
-        assert history[2]["state"] == TableState.SERVED
+        assert history[0]["state"] == "empty"
+        assert history[1]["state"] == "occupied"
+        assert history[2]["state"] == "served"
 
     def test_history_has_frame_numbers(self):
         fsm = TableStateMachine(table_id="T1", hysteresis=1)
@@ -98,3 +100,14 @@ class TestTableStateMachine:
         fsm.update(TableState.OCCUPIED)
         fsm.update(TableState.EMPTY)
         assert fsm.state == TableState.EMPTY
+
+    def test_history_is_json_serializable(self):
+        fsm = TableStateMachine(table_id="T1", hysteresis=1)
+        fsm.update(TableState.OCCUPIED)
+        fsm.update(TableState.SERVED)
+        # Should not raise
+        json_str = json.dumps(fsm.history)
+        parsed = json.loads(json_str)
+        assert parsed[0]["state"] == "empty"
+        assert parsed[1]["state"] == "occupied"
+        assert parsed[2]["state"] == "served"

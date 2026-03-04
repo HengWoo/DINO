@@ -5,6 +5,7 @@ import tempfile
 
 import cv2
 import numpy as np
+import pytest
 
 from dino.showcase.reporter import (
     ShowcaseReporter,
@@ -78,9 +79,9 @@ class TestExtractSampleFrames:
         finally:
             os.unlink(path)
 
-    def test_handles_nonexistent_video(self):
-        frames = extract_sample_frames("/nonexistent/video.mp4", count=8)
-        assert frames == []
+    def test_nonexistent_video_raises(self):
+        with pytest.raises(FileNotFoundError, match="not found"):
+            extract_sample_frames("/nonexistent/video.mp4", count=8)
 
 
 class TestBuildTimelineSvg:

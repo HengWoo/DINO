@@ -47,7 +47,7 @@ class FrameAnnotator:
         labels = []
         for i in range(len(detections)):
             parts = []
-            if "class_name" in detections.data and len(detections.data["class_name"]) > i:
+            if "class_name" in detections.data:
                 parts.append(str(detections.data["class_name"][i]))
             if detections.tracker_id is not None:
                 parts.append(f"#{detections.tracker_id[i]}")

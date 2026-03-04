@@ -3,6 +3,7 @@
 
 import argparse
 import sys
+import traceback
 from pathlib import Path
 
 from dino.config import PipelineConfig
@@ -53,7 +54,6 @@ def main():
 
         config = PipelineConfig(
             prompts=prompts,
-            box_threshold=args.threshold,
             stride=args.stride,
         )
 
@@ -83,8 +83,14 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
         sys.exit(130)
-    except Exception as e:
+    except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except (RuntimeError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception:
+        traceback.print_exc()
         sys.exit(1)
 
 

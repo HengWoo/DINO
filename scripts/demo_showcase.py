@@ -3,8 +3,10 @@
 
 import argparse
 import sys
+import traceback
 from pathlib import Path
 
+import supervision as sv
 from tqdm import tqdm
 
 from dino.annotation.showcase_annotator import ShowcaseAnnotator
@@ -57,7 +59,6 @@ def main():
 
         config = PipelineConfig(
             prompts=prompts,
-            box_threshold=args.threshold,
             stride=args.stride,
         )
 
@@ -100,7 +101,6 @@ def main():
         print("\nExtracting sample frames...")
         sample_frames = extract_sample_frames(annotated_path, count=8)
 
-        import supervision as sv
         video_info = sv.VideoInfo.from_video_path(str(input_path))
         effective_fps = video_info.fps / config.stride if config.stride > 1 else video_info.fps
 
@@ -117,8 +117,14 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
         sys.exit(130)
-    except Exception as e:
+    except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except (RuntimeError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception:
+        traceback.print_exc()
         sys.exit(1)
 
 

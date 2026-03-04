@@ -10,13 +10,21 @@ from dino.detectors.base import BaseDetector
 
 MODEL_ID = "IDEA-Research/grounding-dino-tiny"
 
-
 def _auto_device() -> str:
     if torch.cuda.is_available():
         return "cuda"
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def _available_devices() -> set[str]:
+    devices = {"cpu"}
+    if torch.cuda.is_available():
+        devices.add("cuda")
+    if torch.backends.mps.is_available():
+        devices.add("mps")
+    return devices
 
 
 class GroundingDINODetector(BaseDetector):
@@ -29,17 +37,51 @@ class GroundingDINODetector(BaseDetector):
         box_threshold: float = 0.3,
         text_threshold: float = 0.25,
     ):
-        self.device = device or _auto_device()
+        resolved_device = device or _auto_device()
+        if device is not None:
+            available = _available_devices()
+            if device not in available:
+                raise ValueError(
+                    f"Device '{device}' is not available. "
+                    f"Available devices: {sorted(available)}"
+                )
+        self.device = resolved_device
         self.box_threshold = box_threshold
         self.text_threshold = text_threshold
 
-        self.processor = AutoProcessor.from_pretrained(model_id)
-        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(
-            self.device
-        )
+        try:
+            self.processor = AutoProcessor.from_pretrained(model_id)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load processor for model '{model_id}'. "
+                f"Check your internet connection and model ID."
+            ) from e
+
+        try:
+            self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(
+                self.device
+            )
+        except torch.cuda.OutOfMemoryError:
+            raise RuntimeError(
+                f"Out of memory loading model '{model_id}' on device '{self.device}'. "
+                f"Try using --device cpu or a smaller model."
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load model '{model_id}' on device '{self.device}': {e}"
+            ) from e
 
     def detect(self, frame: np.ndarray, prompts: list[str]) -> sv.Detections:
         """Detect objects matching text prompts in a frame."""
+        if frame is None:
+            raise ValueError("frame must not be None")
+        if frame.ndim != 3 or frame.shape[2] != 3:
+            raise ValueError(
+                f"frame must be a 3-channel image (H, W, 3), got shape {frame.shape}"
+            )
+        if not prompts:
+            raise ValueError("prompts must not be empty")
+
         image = Image.fromarray(frame[..., ::-1])  # BGR -> RGB
         text = ". ".join(prompts) + "."
 
@@ -62,22 +104,22 @@ class GroundingDINODetector(BaseDetector):
         scores = results["scores"].cpu().numpy()
         labels = results["labels"]
 
-        raw_class_ids = [self._label_to_class_id(label, prompts) for label in labels]
+        raw_class_ids = np.array(
+            [self._label_to_class_id(label, prompts) for label in labels],
+            dtype=int,
+        ) if labels else np.array([], dtype=int)
 
-        # Filter out unmatched detections (class_id == -1)
-        mask = np.array([cid >= 0 for cid in raw_class_ids], dtype=bool)
+        mask = raw_class_ids >= 0
         if len(mask) > 0 and not mask.all():
             boxes = boxes[mask]
             scores = scores[mask]
             labels = [l for l, m in zip(labels, mask) if m]
-            raw_class_ids = [c for c, m in zip(raw_class_ids, mask) if m]
-
-        class_ids = np.array(raw_class_ids, dtype=int) if raw_class_ids else np.array([], dtype=int)
+            raw_class_ids = raw_class_ids[mask]
 
         return sv.Detections(
             xyxy=boxes,
             confidence=scores,
-            class_id=class_ids,
+            class_id=raw_class_ids,
             data={"class_name": np.array(labels) if labels else np.array([])},
         )
 
@@ -89,8 +131,9 @@ class GroundingDINODetector(BaseDetector):
         for i, prompt in enumerate(prompts):
             if label_lower == prompt.lower():
                 return i
-        # Fall back to containment (label in prompt only)
+        # Fall back to bidirectional containment
         for i, prompt in enumerate(prompts):
-            if label_lower in prompt.lower():
+            prompt_lower = prompt.lower()
+            if label_lower in prompt_lower or prompt_lower in label_lower:
                 return i
         return -1

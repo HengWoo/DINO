@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import base64
+import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -64,7 +67,14 @@ class ShowcaseStats:
 
 def extract_sample_frames(video_path: str, count: int = 8) -> list[np.ndarray]:
     """Read evenly-spaced frames from a video file."""
+    if not Path(video_path).exists():
+        logger.warning("Video file not found: %s", video_path)
+        raise FileNotFoundError(f"Video file not found: {video_path}")
+
     cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Failed to open video file: {video_path}")
+
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     if total <= 0:
         cap.release()
@@ -87,7 +97,11 @@ def _frame_to_base64(frame: np.ndarray, max_width: int = 640) -> str:
     if w > max_width:
         scale = max_width / w
         frame = cv2.resize(frame, (max_width, int(h * scale)))
-    _, buf = cv2.imencode(".png", frame)
+    success, buf = cv2.imencode(".png", frame)
+    if not success:
+        raise RuntimeError(
+            f"cv2.imencode failed for frame with shape={frame.shape}, dtype={frame.dtype}"
+        )
     return base64.b64encode(buf).decode("ascii")
 
 
