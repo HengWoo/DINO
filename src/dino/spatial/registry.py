@@ -62,6 +62,19 @@ class SpatialObjectRegistry:
                 "Proximity re-ID: tracker_id=%d -> persistent_id=%d",
                 obj.tracker_id, best_pid,
             )
+            # Clean stale tracker mapping that previously owned this persistent_id
+            old_tid = None
+            for tid, p in self._tracker_to_persistent.items():
+                if p == best_pid and tid != obj.tracker_id:
+                    old_tid = tid
+                    break
+            if old_tid is not None:
+                logger.debug(
+                    "Cleaning stale tracker mapping: tracker_id=%d was mapped to "
+                    "persistent_id=%d (now owned by tracker_id=%d)",
+                    old_tid, best_pid, obj.tracker_id,
+                )
+                del self._tracker_to_persistent[old_tid]
             self._tracker_to_persistent[obj.tracker_id] = best_pid
             return self._update(obj, best_pid)
 
@@ -81,6 +94,13 @@ class SpatialObjectRegistry:
         return obj
 
     def _find_nearest(self, obj: WorldObject) -> int | None:
+        if not obj.class_name:
+            logger.debug(
+                "Object tracker_id=%d has empty class_name — "
+                "proximity matching disabled to avoid false merges",
+                obj.tracker_id,
+            )
+            return None
         best_dist = self.match_distance
         best_pid = None
         for pid, known in self._objects.items():

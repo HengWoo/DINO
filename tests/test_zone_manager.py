@@ -80,15 +80,17 @@ class TestPointInPolygon:
         assert point_in_polygon(np.array([25.0, 75.0]), polygon) is True
         assert point_in_polygon(np.array([75.0, 75.0]), polygon) is False
 
-    def test_degenerate_polygon_returns_false(self) -> None:
-        """Polygon with fewer than 3 vertices returns False."""
+    def test_degenerate_polygon_raises(self) -> None:
+        """Polygon with fewer than 3 vertices raises ValueError."""
         line = np.array([[0, 0], [100, 0]], dtype=float)
-        assert point_in_polygon(np.array([50.0, 0.0]), line) is False
+        with pytest.raises(ValueError, match="polygon"):
+            point_in_polygon(np.array([50.0, 0.0]), line)
 
-    def test_1d_polygon_returns_false(self) -> None:
-        """1D array returns False."""
+    def test_1d_polygon_raises(self) -> None:
+        """1D array raises ValueError."""
         bad = np.array([0, 0, 100])
-        assert point_in_polygon(np.array([50.0, 0.0]), bad) is False
+        with pytest.raises(ValueError, match="polygon"):
+            point_in_polygon(np.array([50.0, 0.0]), bad)
 
 
 # ===========================================================================
@@ -238,6 +240,19 @@ class TestZoneManager:
         enters = [o for o in observations if o.observation_type == ObservationType.ENTER]
         assert len(enters) == 2
         assert {e.persistent_id for e in enters} == {1, 2}
+
+    def test_zone_id_reset_across_frames(self) -> None:
+        """Same object instance reused across frames gets zone_id reset."""
+        mgr = ZoneManager(zones=[_make_square_zone()])
+        obj = _make_object(pid=1, x=50, y=50)
+        mgr.update([obj], frame_idx=0)
+        assert obj.zone_id == "zone-a"
+
+        # Move the SAME object instance outside the zone
+        obj.world_position = np.array([200.0, 200.0, 0.0])
+        mgr.update([obj], frame_idx=1)
+        # Without the reset loop, obj.zone_id would still be "zone-a"
+        assert obj.zone_id is None
 
     def test_overlapping_zones_first_zone_wins(self) -> None:
         """Object in overlapping zones gets zone_id of first matching zone."""

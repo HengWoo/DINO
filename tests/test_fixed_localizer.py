@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 import supervision as sv
@@ -97,3 +99,16 @@ class TestFixedCameraLocalizer:
         objects = localizer.localize(detections, frame, frame_idx=99)
 
         assert objects[0].frame_idx == 99
+
+    def test_no_tracker_id_warns_and_assigns_minus_one(self, caplog):
+        """When tracker_id is None, all objects get -1 and a warning is logged."""
+        localizer = FixedCameraLocalizer()
+        detections = sv.Detections(
+            xyxy=np.array([[10, 20, 100, 200], [0, 0, 50, 50]], dtype=np.float32),
+        )
+        frame = _make_frame()
+        with caplog.at_level(logging.WARNING):
+            objects = localizer.localize(detections, frame, frame_idx=0)
+        assert len(objects) == 2
+        assert all(obj.tracker_id == -1 for obj in objects)
+        assert "tracker_id" in caplog.text
