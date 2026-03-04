@@ -16,6 +16,16 @@ class CameraIntrinsics:
     width: int
     height: int
 
+    def __post_init__(self) -> None:
+        if self.fx <= 0 or self.fy <= 0:
+            raise ValueError(
+                f"focal lengths must be positive, got fx={self.fx}, fy={self.fy}"
+            )
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError(
+                f"dimensions must be positive, got {self.width}x{self.height}"
+            )
+
 
 @dataclass
 class CameraPose:
@@ -25,6 +35,16 @@ class CameraPose:
     rotation: np.ndarray  # (3,3) rotation matrix
     frame_idx: int
     timestamp: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.translation.shape != (3,):
+            raise ValueError(
+                f"translation must be shape (3,), got {self.translation.shape}"
+            )
+        if self.rotation.shape != (3, 3):
+            raise ValueError(
+                f"rotation must be shape (3,3), got {self.rotation.shape}"
+            )
 
 
 @dataclass
