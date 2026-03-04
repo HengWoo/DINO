@@ -480,3 +480,39 @@ class TestSpatialPipeline:
         event_types = [e["event_type"] for e in results.events]
         assert "inline_rule" in event_types
         assert "file_rule" not in event_types
+
+    def test_progress_callback_exception_does_not_kill_pipeline(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        _make_test_video(input_path, num_frames=3)
+
+        def bad_callback(p, t):
+            raise RuntimeError("callback boom")
+
+        detector = self._make_mock_detector()
+        config = PipelineConfig(prompts=["person"])
+        spatial_config = SpatialConfig()
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        # Should complete without raising
+        results = pipeline.run(input_path, output_path, progress_callback=bad_callback)
+        assert len(results.frame_results) == 3
+
+    def test_json_export_atomic_no_partial_file(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        json_path = str(tmp_path / "results.json")
+        _make_test_video(input_path, num_frames=3)
+
+        detector = self._make_mock_detector()
+        config = PipelineConfig(prompts=["person"])
+        spatial_config = SpatialConfig()
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        pipeline.run(input_path, output_path, json_output=json_path)
+
+        # JSON file should exist; temp file should not
+        assert (tmp_path / "results.json").exists()
+        assert not (tmp_path / "results.json.tmp").exists()
