@@ -23,6 +23,16 @@ class ZoneDefinition:
     polygon: np.ndarray  # (M, 2) for 2D or (M, 3) for 3D
     metadata: dict = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not self.zone_id:
+            raise ValueError("zone_id must not be empty")
+        if not self.name:
+            raise ValueError("name must not be empty")
+        if self.polygon.ndim != 2 or self.polygon.shape[0] < 3:
+            raise ValueError(
+                f"polygon must be (M, 2+) with M >= 3, got shape {self.polygon.shape}"
+            )
+
 
 @dataclass
 class ZoneState:
@@ -33,7 +43,7 @@ class ZoneState:
     is_currently_observed: bool = False
 
 
-@dataclass
+@dataclass(frozen=True)
 class ZoneObservation:
     """Record of an object being observed in/around a zone."""
     zone_id: str
@@ -43,7 +53,7 @@ class ZoneObservation:
     timestamp: float = 0.0
 
 
-@dataclass
+@dataclass(frozen=True)
 class ZoneEvent:
     """A higher-level event triggered by rules."""
     zone_id: str

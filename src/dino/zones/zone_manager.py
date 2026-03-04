@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 from dino.spatial.models import WorldObject
@@ -9,6 +11,8 @@ from dino.zones.models import (
     ZoneObservation,
     ZoneState,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def point_in_polygon(point: np.ndarray, polygon: np.ndarray) -> bool:
@@ -21,13 +25,15 @@ def point_in_polygon(point: np.ndarray, polygon: np.ndarray) -> bool:
     Returns:
         True if point is inside the polygon.
     """
-    x, y = point[0], point[1]
+    if polygon.ndim != 2 or polygon.shape[0] < 3:
+        return False
+    x, y = float(point[0]), float(point[1])
     n = len(polygon)
     inside = False
     j = n - 1
     for i in range(n):
-        xi, yi = polygon[i][0], polygon[i][1]
-        xj, yj = polygon[j][0], polygon[j][1]
+        xi, yi = float(polygon[i][0]), float(polygon[i][1])
+        xj, yj = float(polygon[j][0]), float(polygon[j][1])
         if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
             inside = not inside
         j = i
@@ -46,7 +52,9 @@ class ZoneManager:
                 self.add_zone(zone)
 
     def add_zone(self, zone: ZoneDefinition) -> None:
-        """Add a zone to track."""
+        """Add a zone to track. Warns if overwriting an existing zone."""
+        if zone.zone_id in self._zones:
+            logger.warning("Overwriting existing zone %s", zone.zone_id)
         self._zones[zone.zone_id] = zone
         self._states[zone.zone_id] = ZoneState(zone_id=zone.zone_id)
 
@@ -57,6 +65,7 @@ class ZoneManager:
 
         Checks containment for each object against each zone,
         generates enter/exit/present observations.
+        Sets obj.zone_id to the first matching zone (or None).
 
         Returns:
             List of observations generated this update.
@@ -69,6 +78,10 @@ class ZoneManager:
 
             for obj in objects:
                 if obj.persistent_id is None:
+                    logger.debug(
+                        "Skipping object with tracker_id=%d: no persistent_id",
+                        obj.tracker_id,
+                    )
                     continue
                 pos_2d = obj.world_position[:2]
                 if point_in_polygon(pos_2d, zone_def.polygon[:, :2]):
@@ -91,7 +104,9 @@ class ZoneManager:
                         )
                     new_observations.append(obs)
                     state.present_objects[obj.persistent_id] = obj
-                    obj.zone_id = zone_id
+                    # Set zone_id only if not already set by a prior zone this frame
+                    if obj.zone_id is None:
+                        obj.zone_id = zone_id
 
             # Check exits
             exited = set(state.present_objects.keys()) - current_ids
@@ -113,8 +128,19 @@ class ZoneManager:
         return new_observations
 
     def get_zone_state(self, zone_id: str) -> ZoneState | None:
-        """Get current state of a zone."""
-        return self._states.get(zone_id)
+        """Get current state of a zone.
+
+        Returns a copy to prevent external mutation of internal state.
+        """
+        state = self._states.get(zone_id)
+        if state is None:
+            return None
+        return ZoneState(
+            zone_id=state.zone_id,
+            present_objects=dict(state.present_objects),
+            last_observed_at=state.last_observed_at,
+            is_currently_observed=state.is_currently_observed,
+        )
 
     @property
     def observations(self) -> list[ZoneObservation]:

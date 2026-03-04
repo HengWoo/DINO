@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from dino.spatial.models import WorldObject
 from dino.zones.event_rules import EventRule, RuleEngine
@@ -103,6 +104,22 @@ class TestEventRule:
         assert rule.evaluate(state_bad) is False
 
 
+class TestEventRuleValidation:
+    """Tests for EventRule __post_init__ validation."""
+
+    def test_empty_event_type_raises(self) -> None:
+        with pytest.raises(ValueError, match="event_type"):
+            EventRule(event_type="", requires_all=["person"])
+
+    def test_hysteresis_zero_raises(self) -> None:
+        with pytest.raises(ValueError, match="hysteresis"):
+            EventRule(event_type="test", requires_all=["person"], hysteresis=0)
+
+    def test_no_conditions_raises(self) -> None:
+        with pytest.raises(ValueError, match="At least one condition"):
+            EventRule(event_type="test")
+
+
 # ===========================================================================
 # TestRuleEngine
 # ===========================================================================
@@ -122,6 +139,45 @@ class TestRuleEngine:
         events = engine.evaluate(state, frame_idx=2)
         assert len(events) == 1
         assert events[0].event_type == "alert"
+
+    def test_hysteresis_latches_after_firing(self) -> None:
+        """After firing, the event should NOT re-fire until condition breaks."""
+        rule = EventRule(event_type="alert", requires_all=["person"], hysteresis=3)
+        engine = RuleEngine(rules=[rule])
+        state = _make_state("z1", [_make_object(1, "person")])
+
+        # Build up and fire
+        engine.evaluate(state, frame_idx=0)
+        engine.evaluate(state, frame_idx=1)
+        events = engine.evaluate(state, frame_idx=2)
+        assert len(events) == 1
+
+        # Continue with same state — should NOT fire again
+        assert engine.evaluate(state, frame_idx=3) == []
+        assert engine.evaluate(state, frame_idx=4) == []
+        assert engine.evaluate(state, frame_idx=5) == []
+
+    def test_hysteresis_resets_and_refires(self) -> None:
+        """After condition breaks and re-establishes, event fires again."""
+        rule = EventRule(event_type="alert", requires_all=["person"], hysteresis=3)
+        engine = RuleEngine(rules=[rule])
+        state_present = _make_state("z1", [_make_object(1, "person")])
+        state_empty = _make_state("z1", [])
+
+        # Fire once
+        engine.evaluate(state_present, frame_idx=0)
+        engine.evaluate(state_present, frame_idx=1)
+        events = engine.evaluate(state_present, frame_idx=2)
+        assert len(events) == 1
+
+        # Break condition
+        engine.evaluate(state_empty, frame_idx=3)
+
+        # Re-establish — needs 3 more consecutive
+        assert engine.evaluate(state_present, frame_idx=4) == []
+        assert engine.evaluate(state_present, frame_idx=5) == []
+        events = engine.evaluate(state_present, frame_idx=6)
+        assert len(events) == 1
 
     def test_hysteresis_resets(self) -> None:
         rule = EventRule(event_type="alert", requires_all=["person"], hysteresis=3)
@@ -161,3 +217,13 @@ class TestRuleEngine:
         assert events[0].zone_id == "zone-x"
         assert events[0].frame_idx == 42
         assert events[0].timestamp == 1.5
+
+    def test_empty_state_with_requires_none(self) -> None:
+        """Empty zone with requires_none=["person"] should fire."""
+        rule = EventRule(event_type="empty", requires_none=["person"])
+        engine = RuleEngine(rules=[rule])
+        state = _make_state("z1", [])
+
+        events = engine.evaluate(state, frame_idx=0)
+        assert len(events) == 1
+        assert events[0].event_type == "empty"

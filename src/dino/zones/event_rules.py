@@ -1,20 +1,43 @@
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import dataclass
 
 from dino.zones.models import ZoneEvent, ZoneState
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class EventRule:
-    """Configurable rule for generating zone events."""
+    """Configurable rule for generating zone events.
+
+    At least one condition (requires_all, requires_any, requires_none,
+    or min_count) must be specified.
+    """
     event_type: str
     requires_all: list[str] | None = None
     requires_any: list[str] | None = None
     requires_none: list[str] | None = None
     min_count: dict[str, int] | None = None
     hysteresis: int = 1
+
+    def __post_init__(self) -> None:
+        if not self.event_type:
+            raise ValueError("event_type must not be empty")
+        if self.hysteresis < 1:
+            raise ValueError(f"hysteresis must be >= 1, got {self.hysteresis}")
+        if (
+            self.requires_all is None
+            and self.requires_any is None
+            and self.requires_none is None
+            and self.min_count is None
+        ):
+            raise ValueError(
+                "At least one condition must be set "
+                "(requires_all, requires_any, requires_none, or min_count)"
+            )
 
     def evaluate(self, state: ZoneState) -> bool:
         """Check if rule conditions are met for the given zone state."""
@@ -43,12 +66,18 @@ class EventRule:
 
 
 class RuleEngine:
-    """Evaluates event rules against zone states with hysteresis."""
+    """Evaluates event rules against zone states with hysteresis.
+
+    Hysteresis is latching: once an event fires, it will not fire again
+    until the condition breaks and then re-meets the hysteresis threshold.
+    """
 
     def __init__(self, rules: list[EventRule]):
         self._rules = rules
         # (zone_id, event_type) -> consecutive frame count
         self._counters: dict[tuple[str, str], int] = {}
+        # (zone_id, event_type) -> whether currently latched (already fired)
+        self._latched: dict[tuple[str, str], bool] = {}
 
     def evaluate(
         self, state: ZoneState, frame_idx: int, timestamp: float = 0.0
@@ -56,11 +85,15 @@ class RuleEngine:
         """Evaluate all rules against a zone state.
 
         Returns events for rules that have met their hysteresis threshold.
+        Events fire once and latch until the condition breaks.
         """
         events: list[ZoneEvent] = []
         for rule in self._rules:
             key = (state.zone_id, rule.event_type)
             if rule.evaluate(state):
+                if self._latched.get(key, False):
+                    # Already fired, don't re-fire
+                    continue
                 self._counters[key] = self._counters.get(key, 0) + 1
                 if self._counters[key] >= rule.hysteresis:
                     events.append(
@@ -71,7 +104,13 @@ class RuleEngine:
                             timestamp=timestamp,
                         )
                     )
+                    self._latched[key] = True
                     self._counters[key] = 0
+                    logger.debug(
+                        "Event %s fired for zone %s at frame %d",
+                        rule.event_type, state.zone_id, frame_idx,
+                    )
             else:
                 self._counters[key] = 0
+                self._latched[key] = False
         return events
