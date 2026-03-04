@@ -29,12 +29,14 @@ class SpatialConfig:
     max_age_seconds: float = 30.0
     zones_path: str | None = None
     rules: list[dict] | None = None
+    depth_model: str | None = None
+    camera_fov_deg: float = 70.0
 
     def __post_init__(self):
-        if self.camera_mode not in ("fixed",):
+        if self.camera_mode not in ("fixed", "depth"):
             raise ValueError(
                 f"Unsupported camera_mode: {self.camera_mode!r}, "
-                f"must be one of ('fixed',)"
+                f"must be one of ('fixed', 'depth')"
             )
         if self.match_distance <= 0:
             raise ValueError(f"match_distance must be > 0, got {self.match_distance}")

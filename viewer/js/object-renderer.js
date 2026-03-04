@@ -14,10 +14,11 @@ const MARKER_RADIUS = 4;
 const MARKER_HEIGHT = 12;
 
 export class ObjectRenderer {
-  constructor(scene, width, height) {
+  constructor(scene, width, height, hasCamera = false) {
     this.scene = scene;
     this.width = width;
     this.height = height;
+    this.hasCamera = hasCamera;
     this.pool = new Map(); // persistent_id -> { mesh, label, group }
   }
 
@@ -65,8 +66,15 @@ export class ObjectRenderer {
 
         // Update position from world_position
         const wp = obj.world_position;
-        const pos = pixelToWorld(wp[0], wp[1], this.width, this.height);
-        entry.group.position.set(pos.x, 0, pos.z);
+        if (this.hasCamera && wp.length >= 3 && wp[2] !== 0) {
+          // Real 3D mode: world positions from depth estimation
+          // Map to Three.js Y-up: [x, z, -y]
+          entry.group.position.set(wp[0], wp[2], -wp[1]);
+        } else {
+          // Legacy flat mode: pixel-space positions
+          const pos = pixelToWorld(wp[0], wp[1], this.width, this.height);
+          entry.group.position.set(pos.x, 0, pos.z);
+        }
         entry.group.visible = true;
 
         // Update label

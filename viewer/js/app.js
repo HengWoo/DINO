@@ -6,6 +6,7 @@ import { createScene, startRenderLoop } from './scene.js';
 import { createFloorPlan } from './floor-plan.js';
 import { ZoneRenderer } from './zone-renderer.js';
 import { ObjectRenderer } from './object-renderer.js';
+import { CameraRenderer } from './camera-renderer.js';
 import { Timeline } from './timeline.js';
 
 const PLAY_SYMBOL = '\u25B6';
@@ -36,10 +37,11 @@ function initViewer(data) {
     const metadata = getMetadata(data);
     const zones = getZones(data);
     const frameIndex = buildFrameIndex(data);
+    const hasCamera = !!(metadata.camera);
 
     const container = document.getElementById('scene-container');
     const { scene, camera, renderer, controls, labelRenderer } = createScene(
-      container, metadata.width, metadata.height, signal
+      container, metadata.width, metadata.height, signal, { hasCamera }
     );
 
     currentRenderer = renderer;
@@ -50,7 +52,13 @@ function initViewer(data) {
     const zoneRenderer = new ZoneRenderer(scene, metadata.width, metadata.height);
     zoneRenderer.renderZones(zones);
 
-    const objectRenderer = new ObjectRenderer(scene, metadata.width, metadata.height);
+    const objectRenderer = new ObjectRenderer(scene, metadata.width, metadata.height, hasCamera);
+
+    // Camera frustum visualization (only in depth mode)
+    if (hasCamera) {
+      const cameraRenderer = new CameraRenderer(scene);
+      cameraRenderer.renderCamera(metadata.camera);
+    }
 
     // UI elements
     const scrubber = document.getElementById('scrubber');

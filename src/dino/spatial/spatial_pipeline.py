@@ -60,8 +60,20 @@ class SpatialPipeline:
         self._zone_annotator = ZoneAnnotator()
 
         # Localizer
+        self._camera_intrinsics = None
+        self._camera_pose = None
+
         if spatial_config.camera_mode == "fixed":
             self._localizer = FixedCameraLocalizer()
+        elif spatial_config.camera_mode == "depth":
+            # Depth localizer needs video dimensions for camera estimation.
+            # We load the model eagerly but defer localizer creation until run().
+            from dino.spatial.depth_estimator import DepthEstimator
+
+            self._depth_estimator = DepthEstimator(
+                model_id=spatial_config.depth_model,
+            )
+            self._localizer = FixedCameraLocalizer()  # placeholder until run()
         else:
             raise ValueError(f"Unsupported camera_mode: {spatial_config.camera_mode!r}")
 
@@ -134,6 +146,20 @@ class SpatialPipeline:
         output_p.parent.mkdir(parents=True, exist_ok=True)
 
         video_info = sv.VideoInfo.from_video_path(input_path)
+
+        # Finalize depth localizer now that we know video dimensions
+        if self.spatial_config.camera_mode == "depth":
+            from dino.spatial.camera_estimator import estimate_camera
+            from dino.spatial.depth_localizer import DepthLocalizer
+
+            intrinsics, pose = estimate_camera(
+                video_info.width, video_info.height,
+                self.spatial_config.camera_fov_deg,
+            )
+            self._localizer = DepthLocalizer(intrinsics, pose, self._depth_estimator)
+            self._camera_intrinsics = intrinsics
+            self._camera_pose = pose
+
         if video_info.fps <= 0:
             raise ValueError(
                 f"Input video reports fps={video_info.fps}. "
@@ -196,6 +222,20 @@ class SpatialPipeline:
             json_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = json_path.with_suffix(".json.tmp")
             try:
+                camera_meta = None
+                if self._camera_intrinsics is not None:
+                    ci = self._camera_intrinsics
+                    camera_meta = {
+                        "position": self._camera_pose.translation.tolist(),
+                        "rotation": self._camera_pose.rotation.tolist(),
+                        "fov_deg": self.spatial_config.camera_fov_deg,
+                        "intrinsics": {
+                            "fx": ci.fx, "fy": ci.fy,
+                            "cx": ci.cx, "cy": ci.cy,
+                            "width": ci.width, "height": ci.height,
+                        },
+                    }
+
                 with open(tmp_path, "w") as f:
                     json.dump(
                         {
@@ -206,6 +246,7 @@ class SpatialPipeline:
                                 "total_frames": total_frames,
                                 "duration_sec": round(total_frames / adjusted_fps, 3),
                                 "stride": self.config.stride,
+                                "camera": camera_meta,
                             },
                             "zones": [
                                 {"zone_id": z.zone_id, "name": z.name, "polygon": z.polygon.tolist()}
