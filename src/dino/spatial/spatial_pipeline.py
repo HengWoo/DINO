@@ -134,8 +134,9 @@ class SpatialPipeline:
 
         video_info = sv.VideoInfo.from_video_path(input_path)
         if video_info.fps <= 0:
-            logger.warning(
-                "Video reports fps=%s; timestamps will all be 0.0", video_info.fps
+            raise ValueError(
+                f"Input video reports fps={video_info.fps}. "
+                f"A positive FPS is required for correct timestamps and output video."
             )
         adjusted_fps = (
             video_info.fps / self.config.stride
@@ -182,25 +183,33 @@ class SpatialPipeline:
                     try:
                         progress_callback(processed, total_frames)
                     except Exception:
-                        logger.warning(
-                            "progress_callback raised an exception", exc_info=True
+                        logger.error(
+                            "progress_callback raised an exception; "
+                            "disabling further callbacks for this run",
+                            exc_info=True,
                         )
+                        progress_callback = None
 
         if json_output:
             json_path = Path(json_output)
             json_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = json_path.with_suffix(".json.tmp")
-            with open(tmp_path, "w") as f:
-                json.dump(
-                    {
-                        "frames": results.frame_results,
-                        "observations": results.observations,
-                        "events": results.events,
-                    },
-                    f,
-                    indent=2,
-                )
-            tmp_path.replace(json_path)
+            try:
+                with open(tmp_path, "w") as f:
+                    json.dump(
+                        {
+                            "frames": results.frame_results,
+                            "observations": results.observations,
+                            "events": results.events,
+                        },
+                        f,
+                        indent=2,
+                    )
+                tmp_path.replace(json_path)
+            except (TypeError, OSError) as e:
+                logger.error("Failed to write JSON results to %s: %s", json_output, e)
+                if tmp_path.exists():
+                    tmp_path.unlink()
 
         return results
 

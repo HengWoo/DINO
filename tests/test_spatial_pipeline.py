@@ -481,14 +481,18 @@ class TestSpatialPipeline:
         assert "inline_rule" in event_types
         assert "file_rule" not in event_types
 
-    def test_progress_callback_exception_does_not_kill_pipeline(self, tmp_path):
+    def test_progress_callback_exception_disables_callback(self, tmp_path):
         from dino.spatial.spatial_pipeline import SpatialPipeline
 
         input_path = str(tmp_path / "input.mp4")
         output_path = str(tmp_path / "output.mp4")
         _make_test_video(input_path, num_frames=3)
 
+        call_count = 0
+
         def bad_callback(p, t):
+            nonlocal call_count
+            call_count += 1
             raise RuntimeError("callback boom")
 
         detector = self._make_mock_detector()
@@ -498,6 +502,8 @@ class TestSpatialPipeline:
         # Should complete without raising
         results = pipeline.run(input_path, output_path, progress_callback=bad_callback)
         assert len(results.frame_results) == 3
+        # Callback should be called once, then disabled after failure
+        assert call_count == 1
 
     def test_json_export_atomic_no_partial_file(self, tmp_path):
         from dino.spatial.spatial_pipeline import SpatialPipeline
@@ -516,3 +522,47 @@ class TestSpatialPipeline:
         # JSON file should exist; temp file should not
         assert (tmp_path / "results.json").exists()
         assert not (tmp_path / "results.json.tmp").exists()
+
+    def test_detector_exception_wraps_with_frame_context(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        _make_test_video(input_path, num_frames=3)
+
+        detector = self._make_mock_detector()
+        detector.detect.side_effect = ValueError("model OOM")
+        config = PipelineConfig(prompts=["person"])
+        spatial_config = SpatialConfig()
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+
+        with pytest.raises(RuntimeError, match="Error processing frame 0") as exc_info:
+            pipeline.run(input_path, output_path)
+        assert isinstance(exc_info.value.__cause__, ValueError)
+
+    def test_invalid_inline_rule_no_conditions_raises(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        detector = self._make_mock_detector()
+        config = PipelineConfig(prompts=["person"])
+        spatial_config = SpatialConfig(
+            rules=[{"event_type": "bad_rule"}],
+        )
+        with pytest.raises(ValueError, match="Invalid inline rule at index 0"):
+            SpatialPipeline(detector, config, spatial_config)
+
+
+class TestLoadZonesFileEdgeCases:
+    def test_invalid_polygon_too_few_vertices(self, tmp_path):
+        from dino.zones.loader import load_zones_file
+
+        zones_data = {
+            "zones": [
+                {"zone_id": "z1", "name": "Bad Zone", "polygon": [[0, 0], [100, 0]]},
+            ],
+        }
+        path = tmp_path / "zones.json"
+        path.write_text(json.dumps(zones_data))
+
+        with pytest.raises(ValueError, match="Invalid zone entry 0"):
+            load_zones_file(path)

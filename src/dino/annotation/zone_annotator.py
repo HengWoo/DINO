@@ -66,7 +66,7 @@ class ZoneAnnotator:
             cv2.fillPoly(overlay, [polygon_pts], color)
 
             # Blend overlay with annotated frame
-            cv2.addWeighted(overlay, self.alpha, annotated, 1 - self.alpha, 0, annotated)
+            annotated = cv2.addWeighted(overlay, self.alpha, annotated, 1 - self.alpha, 0)
             # Reset overlay for next zone
             overlay = annotated.copy()
 
