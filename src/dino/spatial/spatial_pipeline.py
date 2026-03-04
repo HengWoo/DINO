@@ -199,6 +199,18 @@ class SpatialPipeline:
                 with open(tmp_path, "w") as f:
                     json.dump(
                         {
+                            "metadata": {
+                                "fps": float(adjusted_fps),
+                                "width": video_info.width,
+                                "height": video_info.height,
+                                "total_frames": total_frames,
+                                "duration_sec": round(total_frames / adjusted_fps, 3),
+                                "stride": self.config.stride,
+                            },
+                            "zones": [
+                                {"zone_id": z.zone_id, "name": z.name, "polygon": z.polygon.tolist()}
+                                for z in self._zones
+                            ],
                             "frames": results.frame_results,
                             "observations": results.observations,
                             "events": results.events,
