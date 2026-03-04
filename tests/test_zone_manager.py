@@ -242,16 +242,17 @@ class TestZoneManager:
         assert {e.persistent_id for e in enters} == {1, 2}
 
     def test_zone_id_reset_across_frames(self) -> None:
-        """Zone_id is reset at start of each update, preventing stale assignments."""
+        """Same object instance reused across frames gets zone_id reset."""
         mgr = ZoneManager(zones=[_make_square_zone()])
         obj = _make_object(pid=1, x=50, y=50)
         mgr.update([obj], frame_idx=0)
         assert obj.zone_id == "zone-a"
 
-        # Move object outside — zone_id should be reset to None
-        obj_out = _make_object(pid=1, x=200, y=200)
-        mgr.update([obj_out], frame_idx=1)
-        assert obj_out.zone_id is None
+        # Move the SAME object instance outside the zone
+        obj.world_position = np.array([200.0, 200.0, 0.0])
+        mgr.update([obj], frame_idx=1)
+        # Without the reset loop, obj.zone_id would still be "zone-a"
+        assert obj.zone_id is None
 
     def test_overlapping_zones_first_zone_wins(self) -> None:
         """Object in overlapping zones gets zone_id of first matching zone."""

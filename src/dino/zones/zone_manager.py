@@ -78,14 +78,15 @@ class ZoneManager:
         for obj in objects:
             obj.zone_id = None
 
-        skipped_count = 0
+        # Count unregistered objects once (before zone loop to avoid N-zone inflation)
+        skipped_count = sum(1 for obj in objects if obj.persistent_id is None)
+
         for zone_id, zone_def in self._zones.items():
             state = self._states[zone_id]
             current_ids: set[int] = set()
 
             for obj in objects:
                 if obj.persistent_id is None:
-                    skipped_count += 1
                     continue
                 pos_2d = obj.world_position[:2]
                 if point_in_polygon(pos_2d, zone_def.polygon[:, :2]):
