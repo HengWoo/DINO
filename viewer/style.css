@@ -125,6 +125,29 @@ button:hover {
   background: #a78bfa;
 }
 
+.video-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: #475569;
+  font-size: 13px;
+  text-align: center;
+}
+
+.video-element {
+  display: none;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.video-element.video-loaded {
+  display: block;
+}
+
 #time-display,
 #event-count {
   color: #94a3b8;

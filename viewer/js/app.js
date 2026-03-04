@@ -21,10 +21,6 @@ let videoPanel = null;
 // Disposable per-init state
 let disposables = [];
 
-function clearContainer(el) {
-  while (el.firstChild) el.removeChild(el.firstChild);
-}
-
 function cleanup() {
   if (timeline) { timeline.destroy(); timeline = null; }
   if (stopLoop) { stopLoop(); stopLoop = null; }
@@ -36,10 +32,9 @@ function cleanup() {
   }
   disposables = [];
 
-  // Clear panel contents
   for (const id of ['annotation-content', 'topdown-content', 'depth-content']) {
     const el = document.getElementById(id);
-    if (el) clearContainer(el);
+    if (el) el.replaceChildren();
   }
 }
 
@@ -52,7 +47,7 @@ function initViewer(data) {
     const metadata = getMetadata(data);
     const zones = getZones(data);
     const frameIndex = buildFrameIndex(data);
-    const hasCamera = !!(metadata.camera);
+    const hasCamera = Boolean(metadata.camera);
 
     const strip = document.getElementById('viewport-strip');
     strip.classList.toggle('two-col', !hasCamera);
@@ -61,37 +56,30 @@ function initViewer(data) {
     const annotationContainer = document.getElementById('annotation-content');
     videoPanel = new VideoPanel(annotationContainer, metadata);
 
-    // --- Top-down panel (orthographic) ---
-    const topDownContainer = document.getElementById('topdown-content');
-    const topDownBundle = createSceneBundle(
-      topDownContainer, metadata.width, metadata.height, signal, { mode: 'orthographic' }
-    );
-    disposables.push(topDownBundle.renderer, topDownBundle.labelRenderer);
+    // Shared setup: scene bundle + floor plan + zones + objects
+    function buildPanel(containerId, mode, useDepth) {
+      const container = document.getElementById(containerId);
+      const bundle = createSceneBundle(
+        container, metadata.width, metadata.height, signal, { mode }
+      );
+      disposables.push(bundle.renderer, bundle.labelRenderer);
+      createFloorPlan(bundle.scene, metadata.width, metadata.height);
+      const zoneRenderer = new ZoneRenderer(bundle.scene, metadata.width, metadata.height);
+      zoneRenderer.renderZones(zones);
+      const objectRenderer = new ObjectRenderer(bundle.scene, metadata.width, metadata.height, useDepth);
+      return { bundle, zoneRenderer, objectRenderer };
+    }
 
-    createFloorPlan(topDownBundle.scene, metadata.width, metadata.height);
-    const topDownZones = new ZoneRenderer(topDownBundle.scene, metadata.width, metadata.height);
-    topDownZones.renderZones(zones);
-    const topDownObjects = new ObjectRenderer(topDownBundle.scene, metadata.width, metadata.height, false);
+    // --- Top-down panel (orthographic) ---
+    const topDown = buildPanel('topdown-content', 'orthographic', false);
 
     // --- 3D Depth panel (perspective, only if camera data) ---
-    let depthBundle = null;
-    let depthZones = null;
-    let depthObjects = null;
+    let depth = null;
     let cameraRenderer = null;
 
     if (hasCamera) {
-      const depthContainer = document.getElementById('depth-content');
-      depthBundle = createSceneBundle(
-        depthContainer, metadata.width, metadata.height, signal, { mode: 'perspective' }
-      );
-      disposables.push(depthBundle.renderer, depthBundle.labelRenderer);
-
-      createFloorPlan(depthBundle.scene, metadata.width, metadata.height);
-      depthZones = new ZoneRenderer(depthBundle.scene, metadata.width, metadata.height);
-      depthZones.renderZones(zones);
-      depthObjects = new ObjectRenderer(depthBundle.scene, metadata.width, metadata.height, true);
-
-      cameraRenderer = new CameraRenderer(depthBundle.scene);
+      depth = buildPanel('depth-content', 'perspective', true);
+      cameraRenderer = new CameraRenderer(depth.bundle.scene);
       cameraRenderer.renderCamera(metadata.camera);
       disposables.push(cameraRenderer);
     }
@@ -118,12 +106,14 @@ function initViewer(data) {
       videoPanel.seekToFrame(frameIdx, frameData);
 
       // Top-down panel
-      topDownObjects.updateObjects(frameData ? frameData.objects : null);
-      topDownZones.updateFromFrame(frameData);
+      topDown.objectRenderer.updateObjects(frameData ? frameData.objects : null);
+      topDown.zoneRenderer.updateFromFrame(frameData);
 
       // 3D Depth panel
-      if (depthObjects) depthObjects.updateObjects(frameData ? frameData.objects : null);
-      if (depthZones) depthZones.updateFromFrame(frameData);
+      if (depth) {
+        depth.objectRenderer.updateObjects(frameData ? frameData.objects : null);
+        depth.zoneRenderer.updateFromFrame(frameData);
+      }
 
       // Timeline UI
       timeDisplay.textContent = timeline.getTimeString();
@@ -169,13 +159,13 @@ function initViewer(data) {
     timeline.seekToKeyIndex(0);
 
     // --- Render loop — single RAF for all bundles ---
-    const bundles = [topDownBundle, depthBundle].filter(Boolean);
+    const bundles = [topDown.bundle, depth?.bundle].filter(Boolean);
     stopLoop = startRenderLoop(bundles);
 
     // --- Auto-load video ---
     probeVideoUrl('spatial_annotated.mp4').then(url => {
-      if (url) videoPanel.loadVideo(url);
-    });
+      if (url && !signal.aborted) videoPanel.loadVideo(url);
+    }).catch(() => {});
 
   } catch (err) {
     console.error('Failed to initialize viewer:', err);
@@ -200,7 +190,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Video file input
   document.getElementById('video-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
-    if (!file || !videoPanel) return;
+    if (!file) return;
+    if (!videoPanel) {
+      document.getElementById('status').textContent = 'Load a JSON file first before adding video.';
+      return;
+    }
     videoPanel.loadVideo(file);
   });
 

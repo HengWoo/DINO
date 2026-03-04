@@ -6,15 +6,6 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 
 /**
- * Legacy wrapper — keeps old call-sites working.
- */
-export function createScene(container, width, height, signal, { hasCamera = false } = {}) {
-  return createSceneBundle(container, width, height, signal, {
-    mode: hasCamera ? 'perspective' : 'orthographic',
-  });
-}
-
-/**
  * Create a self-contained { scene, camera, renderer, controls, labelRenderer }
  * bundle inside the given container.
  *
@@ -114,12 +105,6 @@ export function createSceneBundle(container, width, height, signal, { mode = 'or
  * @param {Array<{scene, camera, renderer, controls, labelRenderer}>} bundles
  */
 export function startRenderLoop(bundles) {
-  // Accept legacy positional args: (scene, camera, renderer, controls, labelRenderer)
-  if (!Array.isArray(bundles)) {
-    const [scene, camera, renderer, controls, labelRenderer] = arguments;
-    bundles = [{ scene, camera, renderer, controls, labelRenderer }];
-  }
-
   let rafId = null;
   function animate() {
     rafId = requestAnimationFrame(animate);

@@ -13,19 +13,15 @@ export class VideoPanel {
   }
 
   _buildDOM() {
-    // Placeholder shown when no video is loaded
     this.placeholder = document.createElement('div');
-    this.placeholder.style.cssText =
-      'display:flex;align-items:center;justify-content:center;width:100%;height:100%;color:#475569;font-size:13px;text-align:center;';
+    this.placeholder.className = 'video-placeholder';
     this.placeholder.textContent = 'No video loaded — use Load Video';
     this.container.appendChild(this.placeholder);
 
-    // Video element (hidden until loaded)
     this.video = document.createElement('video');
+    this.video.className = 'video-element';
     this.video.muted = true;
     this.video.playsInline = true;
-    this.video.style.cssText =
-      'display:none;width:100%;height:100%;object-fit:contain;background:#000;';
     this.container.appendChild(this.video);
   }
 
@@ -42,8 +38,16 @@ export class VideoPanel {
       this.video.src = source;
     }
 
-    this.video.style.display = 'block';
+    this.video.classList.add('video-loaded');
     this.placeholder.style.display = 'none';
+
+    this.video.onerror = () => {
+      const code = this.video.error ? this.video.error.code : 'unknown';
+      console.error(`Video load failed (code=${code})`);
+      this.video.classList.remove('video-loaded');
+      this.placeholder.style.display = '';
+      this.placeholder.textContent = `Video failed to load (error ${code})`;
+    };
   }
 
   /**
