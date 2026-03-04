@@ -69,8 +69,8 @@ def main():
         print(f"Zones: {args.zones or 'none'}")
         print(f"Stride: {args.stride}")
 
-        def progress(frame_idx, total):
-            print(f"\rFrame {frame_idx}/{total}", end="", flush=True)
+        def progress(processed, total):
+            print(f"\rFrame {processed}/{total}", end="", flush=True)
 
         results = pipeline.run(
             args.input, output_video, json_output=json_output, progress_callback=progress

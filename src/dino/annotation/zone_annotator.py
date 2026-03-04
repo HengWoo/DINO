@@ -20,6 +20,8 @@ class ZoneAnnotator:
         active_color: tuple[int, int, int] = (0, 165, 255),
         alpha: float = 0.2,
     ):
+        if not 0.0 <= alpha <= 1.0:
+            raise ValueError(f"alpha must be in [0, 1], got {alpha}")
         self.zone_color = zone_color
         self.active_color = active_color
         self.alpha = alpha

@@ -26,35 +26,60 @@ def load_zones_file(path: str | Path) -> tuple[list[ZoneDefinition], list[EventR
 
     Raises:
         FileNotFoundError: If path does not exist.
-        ValueError: If JSON is missing required "zones" key.
+        ValueError: If JSON is invalid or missing required keys.
     """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Zones file not found: {path}")
 
-    data = json.loads(path.read_text())
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Zones file {path} contains invalid JSON: {e}") from e
 
     if "zones" not in data:
         raise ValueError("Zones file must contain a 'zones' key")
 
     zones = []
-    for z in data["zones"]:
-        zones.append(ZoneDefinition(
-            zone_id=z["zone_id"],
-            name=z["name"],
-            polygon=np.array(z["polygon"], dtype=np.float64),
-            metadata=z.get("metadata", {}),
-        ))
+    for i, z in enumerate(data["zones"]):
+        required = ("zone_id", "name", "polygon")
+        missing = [k for k in required if k not in z]
+        if missing:
+            raise ValueError(
+                f"Zone entry {i} in {path} is missing required keys: {missing}"
+            )
+        try:
+            zones.append(ZoneDefinition(
+                zone_id=z["zone_id"],
+                name=z["name"],
+                polygon=np.array(z["polygon"], dtype=np.float64),
+                metadata=z.get("metadata", {}),
+            ))
+        except (ValueError, TypeError) as e:
+            raise ValueError(
+                f"Invalid zone entry {i} (zone_id={z.get('zone_id', '?')}) "
+                f"in {path}: {e}"
+            ) from e
 
     rules = []
-    for r in data.get("rules", []):
-        rules.append(EventRule(
-            event_type=r["event_type"],
-            requires_all=r.get("requires_all"),
-            requires_any=r.get("requires_any"),
-            requires_none=r.get("requires_none"),
-            min_count=r.get("min_count"),
-            hysteresis=r.get("hysteresis", 1),
-        ))
+    for i, r in enumerate(data.get("rules", [])):
+        if "event_type" not in r:
+            raise ValueError(
+                f"Rule entry {i} in {path} is missing required key 'event_type'"
+            )
+        try:
+            rules.append(EventRule(
+                event_type=r["event_type"],
+                requires_all=r.get("requires_all"),
+                requires_any=r.get("requires_any"),
+                requires_none=r.get("requires_none"),
+                min_count=r.get("min_count"),
+                hysteresis=r.get("hysteresis", 1),
+            ))
+        except (ValueError, TypeError) as e:
+            raise ValueError(
+                f"Invalid rule entry {i} (event_type={r.get('event_type', '?')}) "
+                f"in {path}: {e}"
+            ) from e
 
     return zones, rules

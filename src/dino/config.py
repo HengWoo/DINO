@@ -40,3 +40,9 @@ class SpatialConfig:
             raise ValueError(f"match_distance must be > 0, got {self.match_distance}")
         if self.max_age_seconds <= 0:
             raise ValueError(f"max_age_seconds must be > 0, got {self.max_age_seconds}")
+        if self.rules is not None:
+            for i, r in enumerate(self.rules):
+                if not isinstance(r, dict):
+                    raise ValueError(f"rules[{i}] must be a dict, got {type(r).__name__}")
+                if "event_type" not in r:
+                    raise ValueError(f"rules[{i}] missing required key 'event_type'")

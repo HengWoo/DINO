@@ -6,7 +6,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import cv2
 import numpy as np
 import supervision as sv
 
@@ -15,11 +14,12 @@ from dino.annotation.zone_annotator import ZoneAnnotator
 from dino.config import PipelineConfig, SpatialConfig
 from dino.detectors.base import BaseDetector
 from dino.spatial.fixed_camera_localizer import FixedCameraLocalizer
+from dino.spatial.models import WorldObject
 from dino.spatial.registry import SpatialObjectRegistry
 from dino.tracking.tracker import ObjectTracker
 from dino.zones.event_rules import EventRule, RuleEngine
 from dino.zones.loader import load_zones_file
-from dino.zones.models import ZoneDefinition
+from dino.zones.models import ZoneDefinition, ZoneEvent, ZoneObservation
 from dino.zones.zone_manager import ZoneManager
 
 logger = logging.getLogger(__name__)
@@ -51,48 +51,61 @@ class SpatialPipeline:
         self.config = config
         self.spatial_config = spatial_config
 
-        self.tracker = ObjectTracker(
+        self._tracker = ObjectTracker(
             track_activation_threshold=config.track_activation_threshold,
             lost_track_buffer=config.lost_track_buffer,
         )
-        self.annotator = FrameAnnotator(trace_length=config.trace_length)
-        self.zone_annotator = ZoneAnnotator()
+        self._annotator = FrameAnnotator(trace_length=config.trace_length)
+        self._zone_annotator = ZoneAnnotator()
 
         # Localizer
         if spatial_config.camera_mode == "fixed":
-            self.localizer = FixedCameraLocalizer()
+            self._localizer = FixedCameraLocalizer()
         else:
             raise ValueError(f"Unsupported camera_mode: {spatial_config.camera_mode!r}")
 
-        self.registry = SpatialObjectRegistry(
+        self._registry = SpatialObjectRegistry(
             match_distance=spatial_config.match_distance,
             max_age_seconds=spatial_config.max_age_seconds,
         )
 
         # Load zones and rules
-        self.zones: list[ZoneDefinition] = []
+        self._zones: list[ZoneDefinition] = []
         rules: list[EventRule] = []
 
         if spatial_config.zones_path:
-            self.zones, file_rules = load_zones_file(spatial_config.zones_path)
+            self._zones, file_rules = load_zones_file(spatial_config.zones_path)
             rules = file_rules
 
         # Inline rules override file rules
         if spatial_config.rules:
-            rules = [
-                EventRule(
-                    event_type=r["event_type"],
-                    requires_all=r.get("requires_all"),
-                    requires_any=r.get("requires_any"),
-                    requires_none=r.get("requires_none"),
-                    min_count=r.get("min_count"),
-                    hysteresis=r.get("hysteresis", 1),
+            if rules:
+                logger.warning(
+                    "Inline rules override %d rules from zones file", len(rules)
                 )
-                for r in spatial_config.rules
-            ]
+            rules = []
+            for i, r in enumerate(spatial_config.rules):
+                if "event_type" not in r:
+                    raise ValueError(
+                        f"Inline rule at index {i} is missing required key 'event_type'"
+                    )
+                try:
+                    rules.append(EventRule(
+                        event_type=r["event_type"],
+                        requires_all=r.get("requires_all"),
+                        requires_any=r.get("requires_any"),
+                        requires_none=r.get("requires_none"),
+                        min_count=r.get("min_count"),
+                        hysteresis=r.get("hysteresis", 1),
+                    ))
+                except (ValueError, TypeError) as e:
+                    raise ValueError(
+                        f"Invalid inline rule at index {i} "
+                        f"(event_type={r.get('event_type', '?')}): {e}"
+                    ) from e
 
-        self.zone_manager = ZoneManager(zones=self.zones if self.zones else None)
-        self.rule_engine = RuleEngine(rules=rules)
+        self._zone_manager = ZoneManager(zones=self._zones if self._zones else None)
+        self._rule_engine = RuleEngine(rules=rules)
 
     def run(
         self,
@@ -107,7 +120,7 @@ class SpatialPipeline:
             input_path: Path to input video.
             output_path: Path for annotated output video.
             json_output: Optional path to export spatial results as JSON.
-            progress_callback: Optional callback(frame_idx, total_frames).
+            progress_callback: Optional callback(processed_count, total_frames).
 
         Returns:
             SpatialResults with per-frame data, observations, and events.
@@ -122,20 +135,21 @@ class SpatialPipeline:
         video_info = sv.VideoInfo.from_video_path(input_path)
         adjusted_fps = (
             video_info.fps / self.config.stride
-            if self.config.stride > 1
+            if self.config.stride > 1 and video_info.fps > 0
             else video_info.fps
         )
+        total_frames = max(1, video_info.total_frames // self.config.stride)
         output_info = sv.VideoInfo(
             width=video_info.width,
             height=video_info.height,
             fps=adjusted_fps,
-            total_frames=video_info.total_frames,
+            total_frames=total_frames,
         )
 
         frame_generator = sv.get_video_frames_generator(input_path)
-        total_frames = max(1, video_info.total_frames // self.config.stride)
 
         results = SpatialResults()
+        processed = 0
 
         with sv.VideoSink(output_path, output_info) as sink:
             for frame_idx, frame in enumerate(frame_generator):
@@ -143,17 +157,25 @@ class SpatialPipeline:
                     continue
 
                 timestamp = frame_idx / video_info.fps if video_info.fps > 0 else 0.0
-                frame_result = self._process_frame(
-                    frame, frame_idx, timestamp, sink
-                )
+
+                try:
+                    frame_result = self._process_frame(
+                        frame, frame_idx, timestamp, sink
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Error processing frame {frame_idx}: {e}"
+                    ) from e
+
                 results.frame_results.append(frame_result)
 
                 # Accumulate observations and events
                 results.observations.extend(frame_result.get("observations", []))
                 results.events.extend(frame_result.get("events", []))
 
+                processed += 1
                 if progress_callback is not None:
-                    progress_callback(frame_idx, total_frames)
+                    progress_callback(processed, total_frames)
 
         if json_output:
             Path(json_output).parent.mkdir(parents=True, exist_ok=True)
@@ -178,14 +200,16 @@ class SpatialPipeline:
         sink: sv.VideoSink,
     ) -> dict:
         """Process a single frame through the full spatial pipeline."""
+        logger.debug("Processing frame %d (t=%.3f)", frame_idx, timestamp)
+
         # Detect
         detections = self.detector.detect(frame, self.config.prompts)
 
         # Track
-        detections = self.tracker.update(detections)
+        detections = self._tracker.update(detections)
 
         # Localize
-        world_objects = self.localizer.localize(detections, frame, frame_idx)
+        world_objects = self._localizer.localize(detections, frame, frame_idx)
 
         # Set timestamp on all objects
         for obj in world_objects:
@@ -193,33 +217,38 @@ class SpatialPipeline:
 
         # Register (persistent identity)
         for i, obj in enumerate(world_objects):
-            world_objects[i] = self.registry.register(obj)
+            world_objects[i] = self._registry.register(obj)
 
         # Zone update
-        observations = self.zone_manager.update(world_objects, frame_idx, timestamp)
+        observations = self._zone_manager.update(world_objects, frame_idx, timestamp)
 
         # Rule evaluation
-        events = []
-        for zone in self.zones:
-            state = self.zone_manager.get_zone_state(zone.zone_id)
+        events: list[ZoneEvent] = []
+        for zone in self._zones:
+            state = self._zone_manager.get_zone_state(zone.zone_id)
             if state is not None:
-                zone_events = self.rule_engine.evaluate(state, frame_idx, timestamp)
+                zone_events = self._rule_engine.evaluate(state, frame_idx, timestamp)
                 events.extend(zone_events)
 
         # Annotate: base (boxes/labels/traces)
-        annotated = self.annotator.annotate(frame, detections)
+        annotated = self._annotator.annotate(frame, detections)
 
         # Annotate: zones
-        if self.zones:
+        if self._zones:
             zone_states = {}
-            for zone in self.zones:
-                state = self.zone_manager.get_zone_state(zone.zone_id)
+            for zone in self._zones:
+                state = self._zone_manager.get_zone_state(zone.zone_id)
                 if state is not None:
                     zone_states[zone.zone_id] = state
-            annotated = self.zone_annotator.annotate(annotated, self.zones, zone_states)
+            annotated = self._zone_annotator.annotate(annotated, self._zones, zone_states)
 
         # Write to sink
         sink.write_frame(annotated)
+
+        logger.debug(
+            "Frame %d: %d objects, %d observations, %d events",
+            frame_idx, len(world_objects), len(observations), len(events),
+        )
 
         return self._build_frame_result(
             frame_idx, timestamp, world_objects, observations, events
@@ -229,9 +258,9 @@ class SpatialPipeline:
     def _build_frame_result(
         frame_idx: int,
         timestamp: float,
-        objects: list,
-        observations: list,
-        events: list,
+        objects: list[WorldObject],
+        observations: list[ZoneObservation],
+        events: list[ZoneEvent],
     ) -> dict:
         return {
             "frame_idx": frame_idx,
@@ -255,7 +284,7 @@ class SpatialPipeline:
         }
 
     @staticmethod
-    def _observation_to_dict(obs) -> dict:
+    def _observation_to_dict(obs: ZoneObservation) -> dict:
         return {
             "zone_id": obs.zone_id,
             "persistent_id": obs.persistent_id,
@@ -265,7 +294,7 @@ class SpatialPipeline:
         }
 
     @staticmethod
-    def _event_to_dict(event) -> dict:
+    def _event_to_dict(event: ZoneEvent) -> dict:
         return {
             "zone_id": event.zone_id,
             "event_type": event.event_type,
