@@ -3,45 +3,8 @@ from __future__ import annotations
 
 import json
 
-import cv2
-import numpy as np
-import pytest
-import supervision as sv
-from unittest.mock import MagicMock
-
+from tests.helpers import make_test_video, make_mock_detector, make_detections
 from dino.config import PipelineConfig, SpatialConfig
-
-
-def _make_test_video(path: str, num_frames: int = 10, fps: int = 30):
-    h, w = 240, 320
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
-    if not writer.isOpened():
-        raise RuntimeError(f"Failed to open VideoWriter at {path}")
-    for i in range(num_frames):
-        frame = np.zeros((h, w, 3), dtype=np.uint8)
-        frame[:] = (i * 25, i * 10, 0)
-        writer.write(frame)
-    writer.release()
-
-
-def _make_mock_detector(detections=None):
-    detector = MagicMock()
-    if detections is None:
-        detector.detect.return_value = sv.Detections.empty()
-    else:
-        detector.detect.return_value = detections
-    return detector
-
-
-def _make_detections(n=1):
-    xyxy = np.array([[50 + i * 10, 50, 90 + i * 10, 90] for i in range(n)], dtype=np.float32)
-    confidence = np.array([0.9] * n, dtype=np.float32)
-    class_id = np.array([0] * n, dtype=int)
-    return sv.Detections(
-        xyxy=xyxy, confidence=confidence, class_id=class_id,
-        data={"class_name": np.array(["person"] * n)},
-    )
 
 
 class TestViewerDataContract:
@@ -53,7 +16,7 @@ class TestViewerDataContract:
         input_path = str(tmp_path / "input.mp4")
         output_path = str(tmp_path / "output.mp4")
         json_path = str(tmp_path / "spatial_results.json")
-        _make_test_video(input_path, num_frames=6)
+        make_test_video(input_path, num_frames=6)
 
         zones_data = {
             "zones": [
@@ -70,8 +33,8 @@ class TestViewerDataContract:
                 json.dump(zones_data, f)
             spatial_kwargs["zones_path"] = zones_path
 
-        dets = _make_detections(n=2) if with_detections else None
-        detector = _make_mock_detector(dets)
+        dets = make_detections(n=2) if with_detections else None
+        detector = make_mock_detector(dets)
         config = PipelineConfig(prompts=["person"], stride=1)
         spatial_config = SpatialConfig(**spatial_kwargs)
         pipeline = SpatialPipeline(detector, config, spatial_config)

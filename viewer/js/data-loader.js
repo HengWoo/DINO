@@ -16,6 +16,9 @@ export async function loadData(source) {
 }
 
 export function buildFrameIndex(data) {
+  if (!Array.isArray(data.frames)) {
+    throw new Error('Invalid data: "frames" must be an array');
+  }
   const index = new Map();
   for (const frame of data.frames) {
     index.set(frame.frame_idx, frame);
@@ -24,6 +27,9 @@ export function buildFrameIndex(data) {
 }
 
 export function getMetadata(data) {
+  if (!data.metadata) {
+    throw new Error('Invalid data: missing "metadata" key');
+  }
   return data.metadata;
 }
 

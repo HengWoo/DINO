@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 
-export function createScene(container, width, height) {
+export function createScene(container, width, height, signal) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0f172a);
 
@@ -61,17 +61,19 @@ export function createScene(container, width, height) {
     renderer.setSize(w, h);
     labelRenderer.setSize(w, h);
   };
-  window.addEventListener('resize', onResize);
+  window.addEventListener('resize', onResize, { signal });
 
   return { scene, camera, renderer, controls, labelRenderer };
 }
 
 export function startRenderLoop(scene, camera, renderer, controls, labelRenderer) {
+  let rafId = null;
   function animate() {
-    requestAnimationFrame(animate);
+    rafId = requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
   }
   animate();
+  return () => { if (rafId) cancelAnimationFrame(rafId); };
 }

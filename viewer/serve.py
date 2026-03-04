@@ -11,7 +11,7 @@ def main():
     args = parser.parse_args()
 
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=".")
-    with http.server.HTTPServer(("", args.port), handler) as httpd:
+    with http.server.HTTPServer(("127.0.0.1", args.port), handler) as httpd:
         print(f"DINO Viewer serving at http://localhost:{args.port}")
         print("Press Ctrl+C to stop")
         httpd.serve_forever()

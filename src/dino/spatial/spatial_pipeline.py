@@ -219,7 +219,7 @@ class SpatialPipeline:
                         indent=2,
                     )
                 tmp_path.replace(json_path)
-            except (TypeError, OSError) as e:
+            except Exception as e:
                 if tmp_path.exists():
                     tmp_path.unlink()
                 raise RuntimeError(
