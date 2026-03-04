@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -18,6 +19,12 @@ class TestSpatialConfig:
         assert config.max_age_seconds == 30.0
         assert config.zones_path is None
         assert config.rules is None
+        assert config.depth_model is None
+        assert config.camera_fov_deg == 70.0
+
+    def test_depth_mode_valid(self):
+        config = SpatialConfig(camera_mode="depth")
+        assert config.camera_mode == "depth"
 
     def test_invalid_camera_mode(self):
         with pytest.raises(ValueError, match="Unsupported camera_mode"):
@@ -649,3 +656,97 @@ class TestSpatialPipeline:
         assert data["metadata"]["stride"] == 1
         assert "zones" in data
         assert data["zones"] == []
+
+
+class TestSpatialPipelineDepthMode:
+    """Integration tests for camera_mode='depth'."""
+
+    @staticmethod
+    def _mock_transformers_pipeline():
+        """Mock the transformers pipeline to return fake depth maps."""
+        mock_pipe = MagicMock()
+        # Return a fake 240x320 uint8 depth image (will be normalized to float32)
+        fake_depth = np.full((240, 320), 128, dtype=np.uint8)
+        mock_pipe.return_value = {"depth": fake_depth}
+        return mock_pipe
+
+    def test_run_with_depth_mode(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        json_path = str(tmp_path / "results.json")
+        make_test_video(input_path, num_frames=3)
+
+        dets = make_detections(n=1)
+        detector = make_mock_detector(dets)
+        config = PipelineConfig(prompts=["person"])
+
+        mock_pipe = self._mock_transformers_pipeline()
+        with patch(
+            "dino.spatial.depth_estimator.pipeline",
+            return_value=mock_pipe,
+        ):
+            spatial_config = SpatialConfig(camera_mode="depth")
+            pipeline = SpatialPipeline(detector, config, spatial_config)
+            results = pipeline.run(input_path, output_path, json_output=json_path)
+
+        assert len(results.frame_results) == 3
+        # Objects should have 3D positions (z != 0)
+        obj = results.frame_results[0]["objects"][0]
+        wp = obj["world_position"]
+        assert len(wp) == 3
+        assert wp[2] != 0.0  # non-flat
+
+    def test_json_export_has_camera_metadata(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        json_path = str(tmp_path / "results.json")
+        make_test_video(input_path, num_frames=2)
+
+        detector = make_mock_detector()
+        config = PipelineConfig(prompts=["person"])
+
+        mock_pipe = self._mock_transformers_pipeline()
+        with patch(
+            "dino.spatial.depth_estimator.pipeline",
+            return_value=mock_pipe,
+        ):
+            spatial_config = SpatialConfig(camera_mode="depth", camera_fov_deg=60.0)
+            pipeline = SpatialPipeline(detector, config, spatial_config)
+            pipeline.run(input_path, output_path, json_output=json_path)
+
+        with open(json_path) as f:
+            data = json.load(f)
+
+        cam = data["metadata"]["camera"]
+        assert cam is not None
+        assert isinstance(cam["position"], list)
+        assert len(cam["position"]) == 3
+        assert isinstance(cam["rotation"], list)
+        assert len(cam["rotation"]) == 3
+        assert cam["fov_deg"] == 60.0
+        assert "intrinsics" in cam
+        assert cam["intrinsics"]["width"] == 320
+        assert cam["intrinsics"]["height"] == 240
+
+    def test_fixed_mode_has_no_camera_metadata(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        json_path = str(tmp_path / "results.json")
+        make_test_video(input_path, num_frames=2)
+
+        detector = make_mock_detector()
+        config = PipelineConfig(prompts=["person"])
+        spatial_config = SpatialConfig(camera_mode="fixed")
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        pipeline.run(input_path, output_path, json_output=json_path)
+
+        with open(json_path) as f:
+            data = json.load(f)
+
+        assert data["metadata"]["camera"] is None

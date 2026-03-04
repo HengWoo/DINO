@@ -6,6 +6,7 @@ import { createScene, startRenderLoop } from './scene.js';
 import { createFloorPlan } from './floor-plan.js';
 import { ZoneRenderer } from './zone-renderer.js';
 import { ObjectRenderer } from './object-renderer.js';
+import { CameraRenderer } from './camera-renderer.js';
 import { Timeline } from './timeline.js';
 
 const PLAY_SYMBOL = '\u25B6';
@@ -16,12 +17,17 @@ let stopRenderLoop = null;
 let abortController = null;
 let currentRenderer = null;
 let currentLabelRenderer = null;
+let currentCameraRenderer = null;
 
 function initViewer(data) {
   // Cleanup previous state
   if (timeline) timeline.destroy();
   if (stopRenderLoop) stopRenderLoop();
   if (abortController) abortController.abort();
+  if (currentCameraRenderer) {
+    currentCameraRenderer.dispose();
+    currentCameraRenderer = null;
+  }
   if (currentRenderer) {
     currentRenderer.dispose();
     currentRenderer.domElement.remove();
@@ -36,10 +42,11 @@ function initViewer(data) {
     const metadata = getMetadata(data);
     const zones = getZones(data);
     const frameIndex = buildFrameIndex(data);
+    const hasCamera = !!(metadata.camera);
 
     const container = document.getElementById('scene-container');
     const { scene, camera, renderer, controls, labelRenderer } = createScene(
-      container, metadata.width, metadata.height, signal
+      container, metadata.width, metadata.height, signal, { hasCamera }
     );
 
     currentRenderer = renderer;
@@ -50,7 +57,13 @@ function initViewer(data) {
     const zoneRenderer = new ZoneRenderer(scene, metadata.width, metadata.height);
     zoneRenderer.renderZones(zones);
 
-    const objectRenderer = new ObjectRenderer(scene, metadata.width, metadata.height);
+    const objectRenderer = new ObjectRenderer(scene, metadata.width, metadata.height, hasCamera);
+
+    // Camera frustum visualization (only in depth mode)
+    if (hasCamera) {
+      currentCameraRenderer = new CameraRenderer(scene);
+      currentCameraRenderer.renderCamera(metadata.camera);
+    }
 
     // UI elements
     const scrubber = document.getElementById('scrubber');

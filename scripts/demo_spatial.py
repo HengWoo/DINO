@@ -20,7 +20,16 @@ def main():
         "--prompts", nargs="+", required=True, help="Text prompts for detection"
     )
     parser.add_argument(
-        "--camera-mode", default="fixed", choices=["fixed"], help="Camera mode"
+        "--camera-mode", default="fixed", choices=["fixed", "depth"],
+        help="Camera mode ('fixed' for flat 2D, 'depth' for 3D with monocular depth)",
+    )
+    parser.add_argument(
+        "--camera-fov", type=float, default=70.0,
+        help="Camera horizontal FOV in degrees (depth mode only)",
+    )
+    parser.add_argument(
+        "--depth-model", default=None,
+        help="Depth estimation model ID (default: Depth-Anything-V2-Small)",
     )
     parser.add_argument(
         "--stride", type=int, default=1, help="Process every Nth frame"
@@ -47,6 +56,8 @@ def main():
         spatial_config = SpatialConfig(
             camera_mode=args.camera_mode,
             zones_path=args.zones,
+            depth_model=args.depth_model,
+            camera_fov_deg=args.camera_fov,
         )
 
         print("Loading Grounding DINO...")
