@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import supervision as sv
 
 from dino.spatial.base_localizer import BaseLocalizer
 from dino.spatial.models import WorldObject
+
+logger = logging.getLogger(__name__)
 
 
 class FixedCameraLocalizer(BaseLocalizer):
@@ -17,6 +21,13 @@ class FixedCameraLocalizer(BaseLocalizer):
     def localize(
         self, detections: sv.Detections, frame: np.ndarray, frame_idx: int
     ) -> list[WorldObject]:
+        if detections.tracker_id is None and len(detections) > 0:
+            logger.warning(
+                "Detections have no tracker_id — all %d objects will get "
+                "tracker_id=-1, which causes identity collision in the registry. "
+                "Ensure a tracker (e.g., ByteTrack) is in the pipeline.",
+                len(detections),
+            )
         objects = []
         for i in range(len(detections)):
             x1, y1, x2, y2 = detections.xyxy[i]

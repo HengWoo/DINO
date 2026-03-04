@@ -26,7 +26,9 @@ def point_in_polygon(point: np.ndarray, polygon: np.ndarray) -> bool:
         True if point is inside the polygon.
     """
     if polygon.ndim != 2 or polygon.shape[0] < 3:
-        return False
+        raise ValueError(
+            f"polygon must be (M, 2+) with M >= 3, got shape {polygon.shape}"
+        )
     x, y = float(point[0]), float(point[1])
     n = len(polygon)
     inside = False
@@ -72,16 +74,18 @@ class ZoneManager:
         """
         new_observations: list[ZoneObservation] = []
 
+        # Reset zone assignments for this frame
+        for obj in objects:
+            obj.zone_id = None
+
+        skipped_count = 0
         for zone_id, zone_def in self._zones.items():
             state = self._states[zone_id]
             current_ids: set[int] = set()
 
             for obj in objects:
                 if obj.persistent_id is None:
-                    logger.debug(
-                        "Skipping object with tracker_id=%d: no persistent_id",
-                        obj.tracker_id,
-                    )
+                    skipped_count += 1
                     continue
                 pos_2d = obj.world_position[:2]
                 if point_in_polygon(pos_2d, zone_def.polygon[:, :2]):
@@ -123,6 +127,13 @@ class ZoneManager:
 
             state.last_observed_at = timestamp
             state.is_currently_observed = len(state.present_objects) > 0
+
+        if skipped_count > 0:
+            logger.warning(
+                "Skipped %d/%d objects with no persistent_id in frame %d. "
+                "Ensure SpatialObjectRegistry.register() is called before ZoneManager.update().",
+                skipped_count, len(objects), frame_idx,
+            )
 
         self._observations.extend(new_observations)
         return new_observations

@@ -147,3 +147,29 @@ class TestSpatialObjectRegistry:
         obj_c = _make_object(tracker_id=3, position=(48.0, 0.0, 0.0), timestamp=1.0)
         r_c = registry.register(obj_c)
         assert r_c.persistent_id == r_b.persistent_id
+
+    def test_empty_class_name_disables_proximity_match(self):
+        """Objects with empty class_name skip proximity matching to avoid false merges."""
+        registry = SpatialObjectRegistry(match_distance=100.0)
+        obj1 = _make_object(tracker_id=1, position=(50.0, 50.0, 0.0), class_name="", timestamp=0.0)
+        obj2 = _make_object(tracker_id=2, position=(50.0, 50.0, 0.0), class_name="", timestamp=1.0)
+        r1 = registry.register(obj1)
+        r2 = registry.register(obj2)
+        # Should NOT merge — each gets its own persistent_id
+        assert r1.persistent_id != r2.persistent_id
+
+    def test_proximity_match_cleans_old_tracker_mapping(self):
+        """When proximity re-IDs, old tracker mapping for that persistent_id is cleaned."""
+        registry = SpatialObjectRegistry(match_distance=100.0)
+        obj1 = _make_object(tracker_id=1, position=(50.0, 50.0, 0.0), timestamp=0.0)
+        r1 = registry.register(obj1)
+        pid = r1.persistent_id
+
+        # New tracker_id at same position — proximity match should re-ID
+        obj2 = _make_object(tracker_id=2, position=(52.0, 52.0, 0.0), timestamp=1.0)
+        r2 = registry.register(obj2)
+        assert r2.persistent_id == pid
+
+        # Old tracker mapping (tracker_id=1 -> pid) should be cleaned up
+        assert 1 not in registry._tracker_to_persistent
+        assert registry._tracker_to_persistent[2] == pid
