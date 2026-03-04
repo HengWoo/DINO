@@ -18,3 +18,31 @@ class PipelineConfig:
             raise ValueError("prompts must not be empty")
         if self.stride < 1:
             raise ValueError(f"stride must be >= 1, got {self.stride}")
+
+
+@dataclass
+class SpatialConfig:
+    """Configuration for spatial processing."""
+
+    camera_mode: str = "fixed"
+    match_distance: float = 50.0
+    max_age_seconds: float = 30.0
+    zones_path: str | None = None
+    rules: list[dict] | None = None
+
+    def __post_init__(self):
+        if self.camera_mode not in ("fixed",):
+            raise ValueError(
+                f"Unsupported camera_mode: {self.camera_mode!r}, "
+                f"must be one of ('fixed',)"
+            )
+        if self.match_distance <= 0:
+            raise ValueError(f"match_distance must be > 0, got {self.match_distance}")
+        if self.max_age_seconds <= 0:
+            raise ValueError(f"max_age_seconds must be > 0, got {self.max_age_seconds}")
+        if self.rules is not None:
+            for i, r in enumerate(self.rules):
+                if not isinstance(r, dict):
+                    raise ValueError(f"rules[{i}] must be a dict, got {type(r).__name__}")
+                if "event_type" not in r:
+                    raise ValueError(f"rules[{i}] missing required key 'event_type'")
