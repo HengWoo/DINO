@@ -564,3 +564,105 @@ class TestSpatialPipeline:
         )
         with pytest.raises(ValueError, match="Invalid inline rule at index 0"):
             SpatialPipeline(detector, config, spatial_config)
+
+    def test_json_export_has_metadata(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        json_path = str(tmp_path / "results.json")
+        num_frames = 5
+        _make_test_video(input_path, num_frames=num_frames, fps=30)
+
+        detector = self._make_mock_detector()
+        config = PipelineConfig(prompts=["person"])
+        spatial_config = SpatialConfig()
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        pipeline.run(input_path, output_path, json_output=json_path)
+
+        with open(json_path) as f:
+            data = json.load(f)
+
+        assert "metadata" in data
+        m = data["metadata"]
+        assert isinstance(m["fps"], float)
+        assert isinstance(m["width"], int)
+        assert isinstance(m["height"], int)
+        assert isinstance(m["total_frames"], int)
+        assert isinstance(m["duration_sec"], float)
+        assert isinstance(m["stride"], int)
+        assert m["width"] == 320
+        assert m["height"] == 240
+        assert m["fps"] == 30.0
+        assert m["total_frames"] == num_frames
+        assert m["stride"] == 1
+
+    def test_json_export_has_zones(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        json_path = str(tmp_path / "results.json")
+        _make_test_video(input_path, num_frames=5)
+
+        zones_data = {
+            "zones": [
+                {
+                    "zone_id": "z1",
+                    "name": "Zone 1",
+                    "polygon": [[0, 0], [200, 0], [200, 200], [0, 200]],
+                },
+            ],
+            "rules": [
+                {"event_type": "occupied", "requires_any": ["person"], "hysteresis": 1},
+            ],
+        }
+        zones_path = str(tmp_path / "zones.json")
+        with open(zones_path, "w") as f:
+            json.dump(zones_data, f)
+
+        dets = self._make_detections(n=1)
+        detector = self._make_mock_detector(dets)
+        config = PipelineConfig(prompts=["person"])
+        spatial_config = SpatialConfig(zones_path=zones_path)
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        pipeline.run(input_path, output_path, json_output=json_path)
+
+        with open(json_path) as f:
+            data = json.load(f)
+
+        assert "zones" in data
+        assert isinstance(data["zones"], list)
+        assert len(data["zones"]) == 1
+        z = data["zones"][0]
+        assert z["zone_id"] == "z1"
+        assert z["name"] == "Zone 1"
+        assert isinstance(z["polygon"], list)
+        assert all(len(pt) == 2 for pt in z["polygon"])
+
+    def test_json_export_metadata_without_zones(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        json_path = str(tmp_path / "results.json")
+        num_frames = 5
+        _make_test_video(input_path, num_frames=num_frames, fps=30)
+
+        detector = self._make_mock_detector()
+        config = PipelineConfig(prompts=["person"])
+        spatial_config = SpatialConfig()
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        pipeline.run(input_path, output_path, json_output=json_path)
+
+        with open(json_path) as f:
+            data = json.load(f)
+
+        assert "metadata" in data
+        assert data["metadata"]["width"] == 320
+        assert data["metadata"]["height"] == 240
+        assert data["metadata"]["fps"] == 30.0
+        assert data["metadata"]["total_frames"] == num_frames
+        assert data["metadata"]["stride"] == 1
+        assert "zones" in data
+        assert data["zones"] == []
