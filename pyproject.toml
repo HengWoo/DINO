@@ -16,6 +16,7 @@ dependencies = [
     "Pillow",
     "numpy",
     "accelerate",
+    "tqdm",
 ]
 
 [project.optional-dependencies]
