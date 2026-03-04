@@ -5,6 +5,7 @@
 export class Timeline {
   constructor(metadata, frameIndex, onFrameChange) {
     this.fps = metadata.fps;
+    this.stride = metadata.stride || 1;
     this.totalFrames = metadata.total_frames;
     this.duration = metadata.duration_sec;
     this.frameIndex = frameIndex;
@@ -81,7 +82,8 @@ export class Timeline {
   }
 
   getTimeString() {
-    const current = this.currentFrame / this.fps;
+    const originalFps = this.fps * this.stride;
+    const current = this.currentFrame / originalFps;
     return `${this._fmt(current)} / ${this._fmt(this.duration)}`;
   }
 

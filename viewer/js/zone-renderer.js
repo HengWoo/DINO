@@ -20,6 +20,10 @@ export class ZoneRenderer {
 
   renderZones(zoneDefs) {
     for (const z of zoneDefs) {
+      if (!z.polygon || !Array.isArray(z.polygon) || z.polygon.length < 3) {
+        console.warn(`Skipping zone "${z.zone_id}": invalid polygon`);
+        continue;
+      }
       const shape = new THREE.Shape();
       const points = z.polygon.map(([px, py]) => pixelToWorld(px, py, this.width, this.height));
 

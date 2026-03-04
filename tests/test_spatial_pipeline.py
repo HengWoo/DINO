@@ -600,6 +600,29 @@ class TestSpatialPipeline:
         assert isinstance(z["polygon"], list)
         assert all(len(pt) == 2 for pt in z["polygon"])
 
+    def test_json_export_metadata_with_stride(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        json_path = str(tmp_path / "results.json")
+        make_test_video(input_path, num_frames=9)
+
+        detector = make_mock_detector()
+        config = PipelineConfig(prompts=["person"], stride=3)
+        spatial_config = SpatialConfig()
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        pipeline.run(input_path, output_path, json_output=json_path)
+
+        with open(json_path) as f:
+            data = json.load(f)
+
+        m = data["metadata"]
+        assert m["stride"] == 3
+        assert m["fps"] == 10.0  # 30 / 3
+        assert m["total_frames"] == 3  # ceil(9/3)
+        assert m["duration_sec"] == pytest.approx(3 / 10, abs=0.01)  # 0.3
+
     def test_json_export_metadata_without_zones(self, tmp_path):
         from dino.spatial.spatial_pipeline import SpatialPipeline
 

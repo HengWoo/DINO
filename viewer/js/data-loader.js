@@ -6,11 +6,19 @@ export async function loadData(source) {
   let data;
   if (source instanceof File) {
     const text = await source.text();
-    data = JSON.parse(text);
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      throw new Error(`Failed to parse "${source.name}": ${e.message}`);
+    }
   } else {
     const resp = await fetch(source);
-    if (!resp.ok) throw new Error(`Failed to load: ${resp.status}`);
-    data = await resp.json();
+    if (!resp.ok) throw new Error(`Failed to load ${source}: ${resp.status}`);
+    try {
+      data = await resp.json();
+    } catch (e) {
+      throw new Error(`Failed to parse JSON from ${source}: ${e.message}`);
+    }
   }
   return data;
 }

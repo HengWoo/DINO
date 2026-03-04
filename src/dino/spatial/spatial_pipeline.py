@@ -168,7 +168,7 @@ class SpatialPipeline:
                     frame_result = self._process_frame(
                         frame, frame_idx, timestamp, sink
                     )
-                except Exception as e:
+                except (TypeError, ValueError, OSError) as e:
                     raise RuntimeError(
                         f"Error processing frame {frame_idx}: {e}"
                     ) from e

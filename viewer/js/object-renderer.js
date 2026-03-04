@@ -45,7 +45,7 @@ export class ObjectRenderer {
     group.add(label);
 
     this.scene.add(group);
-    const entry = { group, mesh, label, labelDiv, material };
+    const entry = { group, mesh, label, labelDiv, material }; // pool: persistent_id -> { group, mesh, label, labelDiv, material }
     this.pool.set(persistentId, entry);
     return entry;
   }
@@ -55,6 +55,10 @@ export class ObjectRenderer {
 
     if (frameObjects) {
       for (const obj of frameObjects) {
+        if (!obj.world_position || !Array.isArray(obj.world_position) || obj.persistent_id == null) {
+          console.warn('Skipping object with missing data:', obj);
+          continue;
+        }
         const id = obj.persistent_id;
         seen.add(id);
         const entry = this._getOrCreateMarker(id, obj.class_name);

@@ -14,12 +14,21 @@ const PAUSE_SYMBOL = '\u23F8';
 let timeline = null;
 let stopRenderLoop = null;
 let abortController = null;
+let currentRenderer = null;
+let currentLabelRenderer = null;
 
 function initViewer(data) {
   // Cleanup previous state
   if (timeline) timeline.destroy();
   if (stopRenderLoop) stopRenderLoop();
   if (abortController) abortController.abort();
+  if (currentRenderer) {
+    currentRenderer.dispose();
+    currentRenderer.domElement.remove();
+  }
+  if (currentLabelRenderer) {
+    currentLabelRenderer.domElement.remove();
+  }
   abortController = new AbortController();
   const signal = abortController.signal;
 
@@ -32,6 +41,9 @@ function initViewer(data) {
     const { scene, camera, renderer, controls, labelRenderer } = createScene(
       container, metadata.width, metadata.height, signal
     );
+
+    currentRenderer = renderer;
+    currentLabelRenderer = labelRenderer;
 
     createFloorPlan(scene, metadata.width, metadata.height);
 
