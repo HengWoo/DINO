@@ -1,40 +1,45 @@
 /**
  * Main entry point for the DINO 3D Spatial Viewer.
  */
-import { loadData, buildFrameIndex, getMetadata, getZones } from './data-loader.js';
-import { createScene, startRenderLoop } from './scene.js';
+import { loadData, buildFrameIndex, getMetadata, getZones, probeVideoUrl } from './data-loader.js';
+import { createSceneBundle, startRenderLoop } from './scene.js';
 import { createFloorPlan } from './floor-plan.js';
 import { ZoneRenderer } from './zone-renderer.js';
 import { ObjectRenderer } from './object-renderer.js';
 import { CameraRenderer } from './camera-renderer.js';
 import { Timeline } from './timeline.js';
+import { VideoPanel } from './video-panel.js';
 
 const PLAY_SYMBOL = '\u25B6';
 const PAUSE_SYMBOL = '\u23F8';
 
 let timeline = null;
-let stopRenderLoop = null;
+let stopLoop = null;
 let abortController = null;
-let currentRenderer = null;
-let currentLabelRenderer = null;
-let currentCameraRenderer = null;
+let videoPanel = null;
+
+// Disposable per-init state
+let disposables = [];
+
+function cleanup() {
+  if (timeline) { timeline.destroy(); timeline = null; }
+  if (stopLoop) { stopLoop(); stopLoop = null; }
+  if (abortController) abortController.abort();
+  if (videoPanel) { videoPanel.dispose(); videoPanel = null; }
+  for (const d of disposables) {
+    if (typeof d.dispose === 'function') d.dispose();
+    if (d.domElement) d.domElement.remove();
+  }
+  disposables = [];
+
+  for (const id of ['annotation-content', 'topdown-content', 'depth-content']) {
+    const el = document.getElementById(id);
+    if (el) el.replaceChildren();
+  }
+}
 
 function initViewer(data) {
-  // Cleanup previous state
-  if (timeline) timeline.destroy();
-  if (stopRenderLoop) stopRenderLoop();
-  if (abortController) abortController.abort();
-  if (currentCameraRenderer) {
-    currentCameraRenderer.dispose();
-    currentCameraRenderer = null;
-  }
-  if (currentRenderer) {
-    currentRenderer.dispose();
-    currentRenderer.domElement.remove();
-  }
-  if (currentLabelRenderer) {
-    currentLabelRenderer.domElement.remove();
-  }
+  cleanup();
   abortController = new AbortController();
   const signal = abortController.signal;
 
@@ -42,30 +47,44 @@ function initViewer(data) {
     const metadata = getMetadata(data);
     const zones = getZones(data);
     const frameIndex = buildFrameIndex(data);
-    const hasCamera = !!(metadata.camera);
+    const hasCamera = Boolean(metadata.camera);
 
-    const container = document.getElementById('scene-container');
-    const { scene, camera, renderer, controls, labelRenderer } = createScene(
-      container, metadata.width, metadata.height, signal, { hasCamera }
-    );
+    const strip = document.getElementById('viewport-strip');
+    strip.classList.toggle('two-col', !hasCamera);
 
-    currentRenderer = renderer;
-    currentLabelRenderer = labelRenderer;
+    // --- Annotation (video) panel ---
+    const annotationContainer = document.getElementById('annotation-content');
+    videoPanel = new VideoPanel(annotationContainer, metadata);
 
-    createFloorPlan(scene, metadata.width, metadata.height);
-
-    const zoneRenderer = new ZoneRenderer(scene, metadata.width, metadata.height);
-    zoneRenderer.renderZones(zones);
-
-    const objectRenderer = new ObjectRenderer(scene, metadata.width, metadata.height, hasCamera);
-
-    // Camera frustum visualization (only in depth mode)
-    if (hasCamera) {
-      currentCameraRenderer = new CameraRenderer(scene);
-      currentCameraRenderer.renderCamera(metadata.camera);
+    // Shared setup: scene bundle + floor plan + zones + objects
+    function buildPanel(containerId, mode, useDepth) {
+      const container = document.getElementById(containerId);
+      const bundle = createSceneBundle(
+        container, metadata.width, metadata.height, signal, { mode }
+      );
+      disposables.push(bundle.renderer, bundle.labelRenderer);
+      createFloorPlan(bundle.scene, metadata.width, metadata.height);
+      const zoneRenderer = new ZoneRenderer(bundle.scene, metadata.width, metadata.height);
+      zoneRenderer.renderZones(zones);
+      const objectRenderer = new ObjectRenderer(bundle.scene, metadata.width, metadata.height, useDepth);
+      return { bundle, zoneRenderer, objectRenderer };
     }
 
-    // UI elements
+    // --- Top-down panel (orthographic) ---
+    const topDown = buildPanel('topdown-content', 'orthographic', false);
+
+    // --- 3D Depth panel (perspective, only if camera data) ---
+    let depth = null;
+    let cameraRenderer = null;
+
+    if (hasCamera) {
+      depth = buildPanel('depth-content', 'perspective', true);
+      cameraRenderer = new CameraRenderer(depth.bundle.scene);
+      cameraRenderer.renderCamera(metadata.camera);
+      disposables.push(cameraRenderer);
+    }
+
+    // --- UI elements ---
     const scrubber = document.getElementById('scrubber');
     const timeDisplay = document.getElementById('time-display');
     const playPauseBtn = document.getElementById('play-pause');
@@ -81,14 +100,25 @@ function initViewer(data) {
       playPauseBtn.textContent = timeline.isPlaying ? PAUSE_SYMBOL : PLAY_SYMBOL;
     }
 
-    // Frame change handler
+    // --- Frame change handler — fan out to all panels ---
     function onFrameChange(frameIdx, frameData) {
-      objectRenderer.updateObjects(frameData ? frameData.objects : null);
-      zoneRenderer.updateFromFrame(frameData);
+      // Video panel
+      videoPanel.seekToFrame(frameIdx, frameData);
+
+      // Top-down panel
+      topDown.objectRenderer.updateObjects(frameData ? frameData.objects : null);
+      topDown.zoneRenderer.updateFromFrame(frameData);
+
+      // 3D Depth panel
+      if (depth) {
+        depth.objectRenderer.updateObjects(frameData ? frameData.objects : null);
+        depth.zoneRenderer.updateFromFrame(frameData);
+      }
+
+      // Timeline UI
       timeDisplay.textContent = timeline.getTimeString();
       scrubber.value = timeline.currentKeyIndex;
 
-      // Count events up to current frame
       let eventsToFrame = 0;
       if (data.events) {
         for (const e of data.events) {
@@ -98,17 +128,14 @@ function initViewer(data) {
       eventCount.textContent = `Events: ${eventsToFrame} / ${totalEvents}`;
     }
 
-    // Create timeline
+    // --- Timeline ---
     timeline = new Timeline(metadata, frameIndex, onFrameChange);
-
-    // Set up scrubber
     scrubber.max = timeline.frameKeys.length - 1;
     scrubber.value = 0;
     scrubber.addEventListener('input', () => {
       timeline.seekToKeyIndex(parseInt(scrubber.value, 10));
     }, { signal });
 
-    // Controls
     playPauseBtn.addEventListener('click', () => {
       timeline.togglePlayPause();
       updatePlayPauseButton();
@@ -119,7 +146,6 @@ function initViewer(data) {
       timeline.setSpeed(parseFloat(speedSelect.value));
     }, { signal });
 
-    // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
       if (e.code === 'Space') { e.preventDefault(); timeline.togglePlayPause(); updatePlayPauseButton(); }
@@ -132,7 +158,15 @@ function initViewer(data) {
     // Trigger initial frame
     timeline.seekToKeyIndex(0);
 
-    stopRenderLoop = startRenderLoop(scene, camera, renderer, controls, labelRenderer);
+    // --- Render loop — single RAF for all bundles ---
+    const bundles = [topDown.bundle, depth?.bundle].filter(Boolean);
+    stopLoop = startRenderLoop(bundles);
+
+    // --- Auto-load video ---
+    probeVideoUrl('spatial_annotated.mp4').then(url => {
+      if (url && !signal.aborted && videoPanel) videoPanel.loadVideo(url);
+    }).catch(() => {});
+
   } catch (err) {
     console.error('Failed to initialize viewer:', err);
     document.getElementById('status').textContent = `Error: ${err.message}`;
@@ -140,7 +174,7 @@ function initViewer(data) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  // File input handler
+  // JSON file input
   document.getElementById('file-input').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -153,7 +187,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Try auto-loading spatial_results.json
+  // Video file input
+  document.getElementById('video-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!videoPanel) {
+      document.getElementById('status').textContent = 'Load a JSON file first before adding video.';
+      return;
+    }
+    videoPanel.loadVideo(file);
+  });
+
+  // Auto-load spatial_results.json
   loadData('spatial_results.json')
     .then(data => initViewer(data))
     .catch(err => {

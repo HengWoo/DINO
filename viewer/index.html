@@ -22,9 +22,26 @@
         Load JSON
         <input type="file" id="file-input" accept=".json" />
       </label>
+      <label class="file-input-label file-input-video">
+        Load Video
+        <input type="file" id="video-input" accept="video/*" />
+      </label>
       <span id="status">No data loaded</span>
     </header>
-    <main id="scene-container"></main>
+    <main id="viewport-strip">
+      <div class="panel" id="panel-annotation">
+        <div class="panel-label">Annotation</div>
+        <div class="panel-content" id="annotation-content"></div>
+      </div>
+      <div class="panel" id="panel-topdown">
+        <div class="panel-label">Top-down</div>
+        <div class="panel-content" id="topdown-content"></div>
+      </div>
+      <div class="panel" id="panel-depth">
+        <div class="panel-label">3D Depth</div>
+        <div class="panel-content" id="depth-content"></div>
+      </div>
+    </main>
     <footer id="timeline-bar">
       <button id="step-back" title="Step back">&lt;&lt;</button>
       <button id="play-pause" title="Play/Pause">&#9654;</button>
