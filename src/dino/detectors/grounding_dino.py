@@ -53,7 +53,7 @@ class GroundingDINODetector(BaseDetector):
         results = self.processor.post_process_grounded_object_detection(
             outputs,
             inputs["input_ids"],
-            box_threshold=self.box_threshold,
+            threshold=self.box_threshold,
             text_threshold=self.text_threshold,
             target_sizes=[image.size[::-1]],
         )[0]
@@ -62,22 +62,35 @@ class GroundingDINODetector(BaseDetector):
         scores = results["scores"].cpu().numpy()
         labels = results["labels"]
 
-        class_ids = np.array(
-            [self._label_to_class_id(label, prompts) for label in labels]
-        )
+        raw_class_ids = [self._label_to_class_id(label, prompts) for label in labels]
+
+        # Filter out unmatched detections (class_id == -1)
+        mask = np.array([cid >= 0 for cid in raw_class_ids], dtype=bool)
+        if len(mask) > 0 and not mask.all():
+            boxes = boxes[mask]
+            scores = scores[mask]
+            labels = [l for l, m in zip(labels, mask) if m]
+            raw_class_ids = [c for c, m in zip(raw_class_ids, mask) if m]
+
+        class_ids = np.array(raw_class_ids, dtype=int) if raw_class_ids else np.array([], dtype=int)
 
         return sv.Detections(
             xyxy=boxes,
             confidence=scores,
-            class_id=class_ids if len(class_ids) > 0 else np.array([], dtype=int),
+            class_id=class_ids,
             data={"class_name": np.array(labels) if labels else np.array([])},
         )
 
     @staticmethod
     def _label_to_class_id(label: str, prompts: list[str]) -> int:
-        """Map a detection label back to a prompt index."""
+        """Map a detection label back to a prompt index. Returns -1 if no match."""
         label_lower = label.lower().strip()
+        # Prefer exact match
         for i, prompt in enumerate(prompts):
-            if prompt.lower() in label_lower or label_lower in prompt.lower():
+            if label_lower == prompt.lower():
                 return i
-        return 0
+        # Fall back to containment (label in prompt only)
+        for i, prompt in enumerate(prompts):
+            if label_lower in prompt.lower():
+                return i
+        return -1

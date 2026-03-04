@@ -43,41 +43,49 @@ def main():
     parser.add_argument("--device", default=None, help="Device (cuda/mps/cpu)")
     args = parser.parse_args()
 
-    if not Path(args.input).exists():
-        print(f"Error: input video not found: {args.input}", file=sys.stderr)
+    try:
+        if not Path(args.input).exists():
+            print(f"Error: input video not found: {args.input}", file=sys.stderr)
+            sys.exit(1)
+
+        prompts = args.prompts or PROMPT_PRESETS[args.preset]
+        print(f"Prompts: {prompts}")
+
+        config = PipelineConfig(
+            prompts=prompts,
+            box_threshold=args.threshold,
+            stride=args.stride,
+        )
+
+        print("Loading Grounding DINO...")
+        detector = GroundingDINODetector(
+            box_threshold=args.threshold,
+            device=args.device,
+        )
+        print(f"Device: {detector.device}")
+
+        pipeline = VideoPipeline(detector=detector, config=config)
+
+        json_path = args.json
+        if json_path is None:
+            json_path = str(Path(args.output).with_suffix(".json"))
+
+        print(f"Processing: {args.input}")
+        print(f"Output video: {args.output}")
+        print(f"Output JSON: {json_path}")
+        print(f"Stride: {args.stride}")
+
+        results = pipeline.run(args.input, args.output, json_output=json_path)
+
+        total_detections = sum(len(r["detections"]) for r in results)
+        print(f"\nDone! Processed {len(results)} frames, {total_detections} total detections.")
+
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        sys.exit(130)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
-
-    prompts = args.prompts or PROMPT_PRESETS[args.preset]
-    print(f"Prompts: {prompts}")
-
-    config = PipelineConfig(
-        prompts=prompts,
-        box_threshold=args.threshold,
-        stride=args.stride,
-    )
-
-    print("Loading Grounding DINO...")
-    detector = GroundingDINODetector(
-        box_threshold=args.threshold,
-        device=args.device,
-    )
-    print(f"Device: {detector.device}")
-
-    pipeline = VideoPipeline(detector=detector, config=config)
-
-    json_path = args.json
-    if json_path is None:
-        json_path = str(Path(args.output).with_suffix(".json"))
-
-    print(f"Processing: {args.input}")
-    print(f"Output video: {args.output}")
-    print(f"Output JSON: {json_path}")
-    print(f"Stride: {args.stride}")
-
-    results = pipeline.run(args.input, args.output, json_output=json_path)
-
-    total_detections = sum(len(r["detections"]) for r in results)
-    print(f"\nDone! Processed {len(results)} frames, {total_detections} total detections.")
 
 
 if __name__ == "__main__":
