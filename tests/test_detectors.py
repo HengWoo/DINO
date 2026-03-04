@@ -151,3 +151,15 @@ class TestGroundingDINODetector:
         assert len(detections) == 2
         assert detections.confidence[0] == pytest.approx(0.9)
         assert detections.confidence[1] == pytest.approx(0.7)
+
+    def test_label_to_class_id_exact_match(self):
+        assert GroundingDINODetector._label_to_class_id("person", ["person", "table"]) == 0
+
+    def test_label_to_class_id_no_match_returns_negative(self):
+        assert GroundingDINODetector._label_to_class_id("unknown", ["person", "table"]) == -1
+
+    def test_label_to_class_id_containment_match(self):
+        assert GroundingDINODetector._label_to_class_id("food", ["person", "plate of food"]) == 1
+
+    def test_label_to_class_id_exact_preferred_over_containment(self):
+        assert GroundingDINODetector._label_to_class_id("table", ["empty table", "table"]) == 1

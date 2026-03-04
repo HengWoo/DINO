@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import cv2
-import numpy as np
 import supervision as sv
 
 from dino.annotation.annotator import FrameAnnotator
@@ -42,6 +40,8 @@ class VideoPipeline:
             List of per-frame result dicts.
         """
         video_info = sv.VideoInfo.from_video_path(input_path)
+        if self.config.stride > 1:
+            video_info.fps = video_info.fps / self.config.stride
         frame_generator = sv.get_video_frames_generator(input_path)
 
         results: list[dict] = []

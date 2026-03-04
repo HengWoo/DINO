@@ -1,5 +1,4 @@
 import json
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -40,6 +39,18 @@ class TestPipelineConfig:
         assert config.prompts == ["person", "table"]
         assert config.box_threshold == 0.5
         assert config.stride == 3
+
+    def test_invalid_stride_zero(self):
+        with pytest.raises(ValueError, match="stride must be >= 1"):
+            PipelineConfig(prompts=["person"], stride=0)
+
+    def test_invalid_stride_negative(self):
+        with pytest.raises(ValueError, match="stride must be >= 1"):
+            PipelineConfig(prompts=["person"], stride=-1)
+
+    def test_invalid_box_threshold(self):
+        with pytest.raises(ValueError, match="box_threshold must be in"):
+            PipelineConfig(prompts=["person"], box_threshold=5.0)
 
 
 class TestVideoPipeline:
@@ -117,3 +128,33 @@ class TestVideoPipeline:
         pipeline.run(input_path, output_path)
 
         assert Path(output_path).exists()
+
+    def test_detections_to_dict_full_fields(self):
+        detections = sv.Detections(
+            xyxy=np.array([[10, 20, 100, 200]], dtype=np.float32),
+            confidence=np.array([0.85]),
+            class_id=np.array([2]),
+            tracker_id=np.array([7]),
+            data={"class_name": np.array(["person"])},
+        )
+        result = VideoPipeline._detections_to_dict(42, detections)
+        assert result["frame"] == 42
+        det = result["detections"][0]
+        assert det["bbox"] == [10.0, 20.0, 100.0, 200.0]
+        assert det["confidence"] == pytest.approx(0.85)
+        assert det["class_id"] == 2
+        assert det["tracker_id"] == 7
+        assert det["class_name"] == "person"
+
+    def test_detections_to_dict_empty(self):
+        result = VideoPipeline._detections_to_dict(0, sv.Detections.empty())
+        assert result["detections"] == []
+        assert result["frame"] == 0
+
+    def test_detections_to_dict_minimal_fields(self):
+        detections = sv.Detections(
+            xyxy=np.array([[10, 20, 100, 200]], dtype=np.float32),
+        )
+        result = VideoPipeline._detections_to_dict(0, detections)
+        det = result["detections"][0]
+        assert "bbox" in det
