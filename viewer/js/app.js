@@ -164,7 +164,7 @@ function initViewer(data) {
 
     // --- Auto-load video ---
     probeVideoUrl('spatial_annotated.mp4').then(url => {
-      if (url && !signal.aborted) videoPanel.loadVideo(url);
+      if (url && !signal.aborted && videoPanel) videoPanel.loadVideo(url);
     }).catch(() => {});
 
   } catch (err) {

@@ -31,6 +31,14 @@ export class VideoPanel {
   loadVideo(source) {
     this._revokeBlobUrl();
 
+    this.video.onerror = () => {
+      const code = this.video.error ? this.video.error.code : 'unknown';
+      console.error(`Video load failed (code=${code})`);
+      this.video.classList.remove('video-loaded');
+      this.placeholder.style.display = '';
+      this.placeholder.textContent = `Video failed to load (error ${code})`;
+    };
+
     if (source instanceof File) {
       this.blobUrl = URL.createObjectURL(source);
       this.video.src = this.blobUrl;
@@ -40,14 +48,6 @@ export class VideoPanel {
 
     this.video.classList.add('video-loaded');
     this.placeholder.style.display = 'none';
-
-    this.video.onerror = () => {
-      const code = this.video.error ? this.video.error.code : 'unknown';
-      console.error(`Video load failed (code=${code})`);
-      this.video.classList.remove('video-loaded');
-      this.placeholder.style.display = '';
-      this.placeholder.textContent = `Video failed to load (error ${code})`;
-    };
   }
 
   /**
