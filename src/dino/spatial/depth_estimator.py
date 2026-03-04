@@ -32,4 +32,7 @@ class DepthEstimator:
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         result = self._pipe(Image.fromarray(rgb))
         depth = np.array(result["depth"], dtype=np.float32)
-        return depth / 255.0
+        d_min, d_max = depth.min(), depth.max()
+        if d_max - d_min < 1e-8:
+            return np.zeros_like(depth)
+        return (depth - d_min) / (d_max - d_min)

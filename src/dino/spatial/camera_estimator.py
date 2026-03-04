@@ -28,6 +28,11 @@ def estimate_camera(
     Returns:
         Tuple of (CameraIntrinsics, CameraPose).
     """
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Video dimensions must be positive, got {width}x{height}")
+    if not (0 < fov_deg < 180):
+        raise ValueError(f"FOV must be between 0 and 180 degrees (exclusive), got {fov_deg}")
+
     fx = fy = width / (2 * math.tan(math.radians(fov_deg / 2)))
     cx, cy = width / 2.0, height / 2.0
     intrinsics = CameraIntrinsics(fx=fx, fy=fy, cx=cx, cy=cy, width=width, height=height)

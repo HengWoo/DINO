@@ -37,10 +37,13 @@ class DepthLocalizer(BaseLocalizer):
     def localize(
         self, detections: sv.Detections, frame: np.ndarray, frame_idx: int
     ) -> list[WorldObject]:
+        if len(detections) == 0:
+            return []
+
         depth_map = self._depth.estimate(frame)
         h, w = depth_map.shape
 
-        if detections.tracker_id is None and len(detections) > 0:
+        if detections.tracker_id is None:
             logger.warning(
                 "Detections have no tracker_id — all %d objects will get "
                 "tracker_id=-1, which causes identity collision in the registry.",

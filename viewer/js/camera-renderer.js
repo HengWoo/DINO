@@ -9,37 +9,34 @@ export class CameraRenderer {
     this.frustumGroup = null;
   }
 
+  _cleanupFrustum() {
+    if (!this.frustumGroup) return;
+    this.scene.remove(this.frustumGroup);
+    this.frustumGroup.traverse(child => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    });
+    this.frustumGroup = null;
+  }
+
   renderCamera(cameraData) {
     if (!cameraData) return;
 
-    // Clean up previous frustum
-    if (this.frustumGroup) {
-      this.scene.remove(this.frustumGroup);
-      this.frustumGroup.traverse(child => {
-        if (child.geometry) child.geometry.dispose();
-        if (child.material) child.material.dispose();
-      });
-    }
-
+    this._cleanupFrustum();
     this.frustumGroup = new THREE.Group();
 
-    const { position, rotation, fov_deg, intrinsics } = cameraData;
+    const { position, fov_deg, intrinsics } = cameraData;
 
     // Camera position in Three.js coordinates (Y-up)
     const camPos = new THREE.Vector3(position[0], position[1], -position[2]);
 
-    // Build rotation matrix from the 3x3 array
-    const rotMatrix = new THREE.Matrix4();
-    rotMatrix.set(
-      rotation[0][0], rotation[0][1], -rotation[0][2], 0,
-      rotation[1][0], rotation[1][1], -rotation[1][2], 0,
-      -rotation[2][0], -rotation[2][1], rotation[2][2], 0,
-      0, 0, 0, 1,
-    );
+    // Convert horizontal FOV to vertical FOV for Three.js PerspectiveCamera
+    const aspect = intrinsics.width / intrinsics.height;
+    const vFovRad = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(fov_deg / 2)) / aspect);
+    const vFovDeg = THREE.MathUtils.radToDeg(vFovRad);
 
     // Create a helper camera matching the frustum parameters
-    const aspect = intrinsics.width / intrinsics.height;
-    const helperCam = new THREE.PerspectiveCamera(fov_deg / aspect, aspect, 10, camPos.length() * 1.5);
+    const helperCam = new THREE.PerspectiveCamera(vFovDeg, aspect, 10, camPos.length() * 1.5);
     helperCam.position.copy(camPos);
     helperCam.lookAt(0, 0, 0);
     helperCam.updateProjectionMatrix();
@@ -80,13 +77,6 @@ export class CameraRenderer {
   }
 
   dispose() {
-    if (this.frustumGroup) {
-      this.scene.remove(this.frustumGroup);
-      this.frustumGroup.traverse(child => {
-        if (child.geometry) child.geometry.dispose();
-        if (child.material) child.material.dispose();
-      });
-      this.frustumGroup = null;
-    }
+    this._cleanupFrustum();
   }
 }

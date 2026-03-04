@@ -66,10 +66,10 @@ export class ObjectRenderer {
 
         // Update position from world_position
         const wp = obj.world_position;
-        if (this.hasCamera && wp.length >= 3 && wp[2] !== 0) {
+        if (this.hasCamera) {
           // Real 3D mode: world positions from depth estimation
           // Map to Three.js Y-up: [x, z, -y]
-          entry.group.position.set(wp[0], wp[2], -wp[1]);
+          entry.group.position.set(wp[0], wp[2] || 0, -wp[1]);
         } else {
           // Legacy flat mode: pixel-space positions
           const pos = pixelToWorld(wp[0], wp[1], this.width, this.height);

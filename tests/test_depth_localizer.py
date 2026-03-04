@@ -102,7 +102,7 @@ class TestDepthLocalizer:
         assert obj.frame_idx == 7
 
     def test_empty_detections(self):
-        """Empty detections should return empty list."""
+        """Empty detections should return empty list without running depth."""
         localizer, mock_estimator = self._make_localizer()
         dets = sv.Detections.empty()
         frame = np.zeros((240, 320, 3), dtype=np.uint8)
@@ -110,8 +110,8 @@ class TestDepthLocalizer:
         objects = localizer.localize(dets, frame, frame_idx=0)
 
         assert objects == []
-        # Depth estimation should still run (pipeline always estimates)
-        mock_estimator.estimate.assert_called_once()
+        # Depth estimation should NOT run for empty detections (optimization)
+        mock_estimator.estimate.assert_not_called()
 
     def test_no_tracker_id_uses_minus_one(self):
         """Detections without tracker_id should use -1."""

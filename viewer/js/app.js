@@ -17,12 +17,17 @@ let stopRenderLoop = null;
 let abortController = null;
 let currentRenderer = null;
 let currentLabelRenderer = null;
+let currentCameraRenderer = null;
 
 function initViewer(data) {
   // Cleanup previous state
   if (timeline) timeline.destroy();
   if (stopRenderLoop) stopRenderLoop();
   if (abortController) abortController.abort();
+  if (currentCameraRenderer) {
+    currentCameraRenderer.dispose();
+    currentCameraRenderer = null;
+  }
   if (currentRenderer) {
     currentRenderer.dispose();
     currentRenderer.domElement.remove();
@@ -56,8 +61,8 @@ function initViewer(data) {
 
     // Camera frustum visualization (only in depth mode)
     if (hasCamera) {
-      const cameraRenderer = new CameraRenderer(scene);
-      cameraRenderer.renderCamera(metadata.camera);
+      currentCameraRenderer = new CameraRenderer(scene);
+      currentCameraRenderer.renderCamera(metadata.camera);
     }
 
     // UI elements

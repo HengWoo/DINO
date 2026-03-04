@@ -62,6 +62,7 @@ class SpatialPipeline:
         # Localizer
         self._camera_intrinsics = None
         self._camera_pose = None
+        self._depth_estimator = None
 
         if spatial_config.camera_mode == "fixed":
             self._localizer = FixedCameraLocalizer()
@@ -73,7 +74,7 @@ class SpatialPipeline:
             self._depth_estimator = DepthEstimator(
                 model_id=spatial_config.depth_model,
             )
-            self._localizer = FixedCameraLocalizer()  # placeholder until run()
+            self._localizer = None  # finalized in run() once video dimensions are known
         else:
             raise ValueError(f"Unsupported camera_mode: {spatial_config.camera_mode!r}")
 
@@ -286,6 +287,11 @@ class SpatialPipeline:
         detections = self._tracker.update(detections)
 
         # Localize
+        if self._localizer is None:
+            raise RuntimeError(
+                "Localizer not initialized. In depth mode, run() must be called "
+                "to finalize the localizer with video dimensions."
+            )
         world_objects = self._localizer.localize(detections, frame, frame_idx)
 
         # Set timestamp on all objects
