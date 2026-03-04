@@ -30,8 +30,42 @@ h1 {
   margin: 0;
 }
 
-#scene-container {
+#viewport-strip {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 2px;
+  overflow: hidden;
+}
+
+#viewport-strip.two-col {
+  grid-template-columns: 1fr 1fr;
+}
+
+#viewport-strip.two-col #panel-depth {
+  display: none;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.panel-label {
+  background: #1e293b;
+  color: #94a3b8;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 8px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.panel-content {
   position: relative;
+  flex: 1;
   overflow: hidden;
 }
 
@@ -85,6 +119,10 @@ button:hover {
 
 .file-input-label input {
   display: none;
+}
+
+.file-input-video {
+  background: #a78bfa;
 }
 
 #time-display,

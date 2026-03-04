@@ -44,3 +44,14 @@ export function getMetadata(data) {
 export function getZones(data) {
   return data.zones || [];
 }
+
+/**
+ * Attempt to load a video URL. Returns the URL if it exists, null otherwise.
+ */
+export async function probeVideoUrl(url) {
+  try {
+    const resp = await fetch(url, { method: 'HEAD' });
+    if (resp.ok) return url;
+  } catch { /* ignore */ }
+  return null;
+}

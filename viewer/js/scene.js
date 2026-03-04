@@ -5,20 +5,38 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 
+/**
+ * Legacy wrapper — keeps old call-sites working.
+ */
 export function createScene(container, width, height, signal, { hasCamera = false } = {}) {
+  return createSceneBundle(container, width, height, signal, {
+    mode: hasCamera ? 'perspective' : 'orthographic',
+  });
+}
+
+/**
+ * Create a self-contained { scene, camera, renderer, controls, labelRenderer }
+ * bundle inside the given container.
+ *
+ * @param {HTMLElement} container
+ * @param {number} width   - scene width (pixels from metadata)
+ * @param {number} height  - scene height (pixels from metadata)
+ * @param {AbortSignal} signal
+ * @param {object} options
+ * @param {'orthographic'|'perspective'} options.mode
+ */
+export function createSceneBundle(container, width, height, signal, { mode = 'orthographic' } = {}) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0f172a);
 
-  const aspect = container.clientWidth / container.clientHeight;
+  const aspect = container.clientWidth / (container.clientHeight || 1);
   let camera;
 
-  if (hasCamera) {
-    // Perspective camera for 3D depth mode — better depth perception
+  if (mode === 'perspective') {
     camera = new THREE.PerspectiveCamera(60, aspect, 1, 5000);
     camera.position.set(0, Math.max(width, height) * 0.8, Math.max(width, height) * 0.6);
     camera.lookAt(0, 0, 0);
   } else {
-    // Orthographic camera — top-down view for flat mode
     const frustumSize = Math.max(width, height) * 0.6;
     camera = new THREE.OrthographicCamera(
       -frustumSize * aspect, frustumSize * aspect,
@@ -31,13 +49,13 @@ export function createScene(container, width, height, signal, { hasCamera = fals
 
   // WebGL renderer
   const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(container.clientWidth, container.clientHeight);
+  renderer.setSize(container.clientWidth, container.clientHeight || 1);
   renderer.setPixelRatio(window.devicePixelRatio);
   container.appendChild(renderer.domElement);
 
   // CSS2D renderer for labels
   const labelRenderer = new CSS2DRenderer();
-  labelRenderer.setSize(container.clientWidth, container.clientHeight);
+  labelRenderer.setSize(container.clientWidth, container.clientHeight || 1);
   labelRenderer.domElement.style.position = 'absolute';
   labelRenderer.domElement.style.top = '0';
   labelRenderer.domElement.style.left = '0';
@@ -46,10 +64,14 @@ export function createScene(container, width, height, signal, { hasCamera = fals
 
   // Controls
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableRotate = true;
   controls.enablePan = true;
   controls.enableZoom = true;
-  controls.maxPolarAngle = Math.PI / 2;
+  if (mode === 'orthographic') {
+    controls.enableRotate = false; // top-down: pan + zoom only
+  } else {
+    controls.enableRotate = true;
+    controls.maxPolarAngle = Math.PI / 2;
+  }
 
   // Lights
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
@@ -57,10 +79,10 @@ export function createScene(container, width, height, signal, { hasCamera = fals
   dirLight.position.set(100, 300, 100);
   scene.add(dirLight);
 
-  // Resize handler
-  const onResize = () => {
+  // Per-container ResizeObserver (not window.resize)
+  const ro = new ResizeObserver(() => {
     const w = container.clientWidth;
-    const h = container.clientHeight;
+    const h = container.clientHeight || 1;
     const a = w / h;
     if (camera.isPerspectiveCamera) {
       camera.aspect = a;
@@ -74,19 +96,38 @@ export function createScene(container, width, height, signal, { hasCamera = fals
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
     labelRenderer.setSize(w, h);
-  };
-  window.addEventListener('resize', onResize, { signal });
+  });
+  ro.observe(container);
+
+  // Disconnect on abort
+  if (signal) {
+    signal.addEventListener('abort', () => ro.disconnect(), { once: true });
+  }
 
   return { scene, camera, renderer, controls, labelRenderer };
 }
 
-export function startRenderLoop(scene, camera, renderer, controls, labelRenderer) {
+/**
+ * Single RAF loop that renders an array of scene bundles.
+ * Returns a stop function.
+ *
+ * @param {Array<{scene, camera, renderer, controls, labelRenderer}>} bundles
+ */
+export function startRenderLoop(bundles) {
+  // Accept legacy positional args: (scene, camera, renderer, controls, labelRenderer)
+  if (!Array.isArray(bundles)) {
+    const [scene, camera, renderer, controls, labelRenderer] = arguments;
+    bundles = [{ scene, camera, renderer, controls, labelRenderer }];
+  }
+
   let rafId = null;
   function animate() {
     rafId = requestAnimationFrame(animate);
-    controls.update();
-    renderer.render(scene, camera);
-    labelRenderer.render(scene, camera);
+    for (const b of bundles) {
+      b.controls.update();
+      b.renderer.render(b.scene, b.camera);
+      b.labelRenderer.render(b.scene, b.camera);
+    }
   }
   animate();
   return () => { if (rafId) cancelAnimationFrame(rafId); };
