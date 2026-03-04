@@ -2,11 +2,26 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock
 
+import cv2
 import numpy as np
 import pytest
+import supervision as sv
 
-from dino.config import SpatialConfig
+from dino.config import PipelineConfig, SpatialConfig
+
+
+def _make_test_video(path: str, num_frames: int = 10, fps: int = 30):
+    """Create a small test video (240x320, mp4v codec)."""
+    h, w = 240, 320
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
+    for i in range(num_frames):
+        frame = np.zeros((h, w, 3), dtype=np.uint8)
+        frame[:] = (i * 25, i * 10, 0)
+        writer.write(frame)
+    writer.release()
 
 
 class TestSpatialConfig:
@@ -145,3 +160,181 @@ class TestZoneAnnotator:
 
         # Active and inactive should produce different results
         assert not np.array_equal(result_inactive, result_active)
+
+
+class TestSpatialPipeline:
+    def _make_mock_detector(self, detections=None):
+        detector = MagicMock()
+        if detections is None:
+            detector.detect.return_value = sv.Detections.empty()
+        else:
+            detector.detect.return_value = detections
+        return detector
+
+    def _make_detections(self, n=1):
+        """Create mock detections with n bounding boxes inside a 320x240 frame."""
+        xyxy = np.array(
+            [[50 + i * 10, 50, 90 + i * 10, 90] for i in range(n)],
+            dtype=np.float32,
+        )
+        confidence = np.array([0.9] * n, dtype=np.float32)
+        class_id = np.array([0] * n, dtype=int)
+        return sv.Detections(
+            xyxy=xyxy,
+            confidence=confidence,
+            class_id=class_id,
+            data={"class_name": np.array(["person"] * n)},
+        )
+
+    def test_run_produces_output_no_zones(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        _make_test_video(input_path, num_frames=5)
+
+        detector = self._make_mock_detector()
+        config = PipelineConfig(prompts=["person"], stride=1)
+        spatial_config = SpatialConfig()
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        results = pipeline.run(input_path, output_path)
+
+        assert (tmp_path / "output.mp4").exists()
+        assert isinstance(results.frame_results, list)
+        assert isinstance(results.observations, list)
+        assert isinstance(results.events, list)
+
+    def test_run_with_zones_and_detections(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        _make_test_video(input_path, num_frames=5)
+
+        zones_data = {
+            "zones": [
+                {
+                    "zone_id": "z1",
+                    "name": "Zone 1",
+                    "polygon": [[0, 0], [200, 0], [200, 200], [0, 200]],
+                },
+            ],
+            "rules": [
+                {"event_type": "occupied", "requires_any": ["person"], "hysteresis": 1},
+            ],
+        }
+        zones_path = str(tmp_path / "zones.json")
+        with open(zones_path, "w") as f:
+            json.dump(zones_data, f)
+
+        dets = self._make_detections(n=1)
+        detector = self._make_mock_detector(dets)
+        config = PipelineConfig(prompts=["person"], stride=1)
+        spatial_config = SpatialConfig(zones_path=zones_path)
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        results = pipeline.run(input_path, output_path)
+
+        assert len(results.frame_results) == 5
+        assert len(results.observations) > 0
+        assert len(results.events) > 0
+
+    def test_run_input_not_found(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        detector = self._make_mock_detector()
+        config = PipelineConfig(prompts=["person"])
+        spatial_config = SpatialConfig()
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        with pytest.raises(FileNotFoundError):
+            pipeline.run("/nonexistent/video.mp4", str(tmp_path / "out.mp4"))
+
+    def test_json_export_structure(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        json_path = str(tmp_path / "results.json")
+        _make_test_video(input_path, num_frames=3)
+
+        detector = self._make_mock_detector()
+        config = PipelineConfig(prompts=["person"])
+        spatial_config = SpatialConfig()
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        pipeline.run(input_path, output_path, json_output=json_path)
+
+        assert (tmp_path / "results.json").exists()
+        with open(json_path) as f:
+            data = json.load(f)
+        assert "frames" in data
+        assert "observations" in data
+        assert "events" in data
+
+    def test_progress_callback(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        _make_test_video(input_path, num_frames=6)
+
+        calls = []
+        detector = self._make_mock_detector()
+        config = PipelineConfig(prompts=["person"])
+        spatial_config = SpatialConfig()
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        pipeline.run(
+            input_path,
+            output_path,
+            progress_callback=lambda i, t: calls.append((i, t)),
+        )
+
+        assert len(calls) == 6
+        assert all(t == 6 for _, t in calls)
+
+    def test_stride_skips_frames(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        _make_test_video(input_path, num_frames=9)
+
+        detector = self._make_mock_detector()
+        config = PipelineConfig(prompts=["person"], stride=3)
+        spatial_config = SpatialConfig()
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        results = pipeline.run(input_path, output_path)
+
+        # Frames 0, 3, 6 should be processed (3 frames)
+        assert len(results.frame_results) == 3
+
+    def test_inline_rules(self, tmp_path):
+        from dino.spatial.spatial_pipeline import SpatialPipeline
+
+        input_path = str(tmp_path / "input.mp4")
+        output_path = str(tmp_path / "output.mp4")
+        _make_test_video(input_path, num_frames=3)
+
+        zones_data = {
+            "zones": [
+                {
+                    "zone_id": "z1",
+                    "name": "Zone 1",
+                    "polygon": [[0, 0], [200, 0], [200, 200], [0, 200]],
+                },
+            ],
+        }
+        zones_path = str(tmp_path / "zones.json")
+        with open(zones_path, "w") as f:
+            json.dump(zones_data, f)
+
+        dets = self._make_detections(n=1)
+        detector = self._make_mock_detector(dets)
+        config = PipelineConfig(prompts=["person"])
+        spatial_config = SpatialConfig(
+            zones_path=zones_path,
+            rules=[{"event_type": "occupied", "requires_any": ["person"]}],
+        )
+        pipeline = SpatialPipeline(detector, config, spatial_config)
+        results = pipeline.run(input_path, output_path)
+
+        assert len(results.events) > 0
+        assert results.events[0]["event_type"] == "occupied"
