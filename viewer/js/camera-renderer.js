@@ -26,6 +26,10 @@ export class CameraRenderer {
     this.frustumGroup = new THREE.Group();
 
     const { position, fov_deg, intrinsics } = cameraData;
+    if (!position || !intrinsics || !fov_deg) {
+      console.warn('CameraRenderer: cameraData missing required fields, skipping frustum.');
+      return;
+    }
 
     // Camera position in Three.js coordinates (Y-up)
     const camPos = new THREE.Vector3(position[0], position[1], -position[2]);
@@ -47,7 +51,7 @@ export class CameraRenderer {
 
     // Semi-transparent cone showing field of view volume
     const coneHeight = camPos.length() * 0.8;
-    const coneRadius = coneHeight * Math.tan(THREE.MathUtils.degToRad(fov_deg / 2));
+    const coneRadius = coneHeight * Math.tan(vFovRad / 2);
     const coneGeo = new THREE.ConeGeometry(coneRadius, coneHeight, 32, 1, true);
     const coneMat = new THREE.MeshBasicMaterial({
       color: 0x38bdf8,
