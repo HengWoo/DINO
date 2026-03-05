@@ -102,6 +102,7 @@ async function initViewer(data) {
 
     if (hasCamera) {
       const cloudContainer = document.getElementById('depth-content');
+      const sceneSpan = Math.min(metadata.width, metadata.height) * 0.35;
 
       // Always use point cloud renderer for center panel
       cloudBundle = createSceneBundle(
@@ -111,7 +112,7 @@ async function initViewer(data) {
 
       // Camera trail
       if (trailData && trailData.length > 0) {
-        const trailConfig = { scale: Math.min(metadata.width, metadata.height) * 0.35 / 15, arrowSize: 6 };
+        const trailConfig = { scale: sceneSpan / 15, arrowSize: 6 };
         cloudTrail = new CameraTrail(cloudBundle.scene, trailConfig);
         cloudTrail.setTrail(trailData);
         disposables.push(cloudTrail);
@@ -123,20 +124,19 @@ async function initViewer(data) {
       cloudObjectRenderer = new CloudObjectRenderer(cloudBundle.scene, 1);
       disposables.push(cloudObjectRenderer);
 
-      probeVideoUrl('point_clouds.bin?v=' + Date.now()).then(url => {
+      probeVideoUrl('point_clouds.bin').then(url => {
         if (url && !signal.aborted && pointCloudRenderer) {
           pointCloudRenderer.loadBinary(url).then(() => {
+            if (signal.aborted) return;
             // Reposition camera to center on point cloud
             const c = pointCloudRenderer.center;
             if (c && cloudBundle) {
-              const span = Math.min(metadata.width, metadata.height) * 0.35;
-              cloudBundle.camera.position.set(c.x, c.y + span * 0.4, c.z + span * 0.3);
-              cloudBundle.camera.lookAt(c.x, c.y, c.z);
+              cloudBundle.camera.position.set(c.x, c.y + sceneSpan * 0.4, c.z + sceneSpan * 0.3);
               cloudBundle.controls.target.set(c.x, c.y, c.z);
               cloudBundle.controls.update();
             }
           }).catch(err => {
-            console.warn('[PointCloud] Load failed:', err.message);
+            console.error('[PointCloud] Load failed:', err);
           });
         }
       }).catch(err => {
