@@ -10,6 +10,7 @@ import supervision as sv
 from dino.spatial.camera_estimator import estimate_camera
 from dino.spatial.depth_localizer import DepthLocalizer
 from dino.spatial.models import WorldObject
+from dino.spatial.projection import backproject_to_world
 
 
 def _make_detections(n=1, bbox_center=(100, 100), size=40):
@@ -127,3 +128,66 @@ class TestDepthLocalizer:
 
         objects = localizer.localize(dets, frame, frame_idx=0)
         assert objects[0].tracker_id == -1
+
+    def test_compute_bbox_3d_shape(self):
+        """_compute_bbox_3d should return (8, 3) array."""
+        localizer, _ = self._make_localizer(depth_value=2.0)
+        intrinsics, pose = estimate_camera(320, 240)
+        depth_map = np.full((240, 320), 2.0, dtype=np.float32)
+        bbox = np.array([80, 80, 120, 120], dtype=np.float32)
+
+        result = localizer._compute_bbox_3d(bbox, depth_map, intrinsics, pose)
+
+        assert result is not None
+        assert result.shape == (8, 3)
+        assert np.all(np.isfinite(result))
+
+    def test_compute_bbox_3d_encloses_world_position(self):
+        """3D bbox AABB should contain the world_position."""
+        localizer, _ = self._make_localizer(depth_value=2.0)
+        intrinsics, pose = estimate_camera(320, 240)
+        depth_map = np.full((240, 320), 2.0, dtype=np.float32)
+        bbox = np.array([80, 80, 120, 120], dtype=np.float32)
+
+        corners = localizer._compute_bbox_3d(bbox, depth_map, intrinsics, pose)
+
+        # Compute world position at bottom-center of bbox
+        u_center = (80 + 120) / 2.0
+        v_bottom = 120.0
+        world_pos = backproject_to_world(u_center, v_bottom, 2.0, intrinsics, pose)
+
+        # AABB from corners should contain world_pos
+        bbox_min = corners.min(axis=0)
+        bbox_max = corners.max(axis=0)
+        for dim in range(3):
+            assert world_pos[dim] >= bbox_min[dim] - 0.1
+            assert world_pos[dim] <= bbox_max[dim] + 0.1
+
+    def test_compute_bbox_3d_with_flat_depth(self):
+        """Uniform depth should produce corners on two depth planes."""
+        localizer, _ = self._make_localizer(depth_value=3.0)
+        intrinsics, pose = estimate_camera(320, 240)
+        depth_map = np.full((240, 320), 3.0, dtype=np.float32)
+        bbox = np.array([80, 80, 120, 120], dtype=np.float32)
+
+        corners = localizer._compute_bbox_3d(bbox, depth_map, intrinsics, pose)
+        assert corners.shape == (8, 3)
+
+        # With flat depth, front 4 corners should be at ~same depth plane
+        # and back 4 corners should be slightly behind
+        # The Z spread should be small (just the extrusion offset)
+        z_range = corners[:, 2].max() - corners[:, 2].min()
+        assert z_range > 0  # There should be some depth extent
+        assert z_range < 1.0  # But not too much for a 0.05 extrusion
+
+    def test_bbox_3d_in_localize_output(self):
+        """localize() should populate bbox_3d on WorldObjects."""
+        localizer, _ = self._make_localizer(depth_value=2.0)
+        dets = _make_detections(n=1, bbox_center=(160, 120))
+        frame = np.zeros((240, 320, 3), dtype=np.uint8)
+
+        objects = localizer.localize(dets, frame, frame_idx=0)
+
+        assert len(objects) == 1
+        assert objects[0].bbox_3d is not None
+        assert objects[0].bbox_3d.shape == (8, 3)

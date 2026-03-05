@@ -67,3 +67,18 @@ class TestEgoMotionEstimator:
         pose = estimator.update(frame2)
         # X translation should be non-zero
         assert abs(pose[0, 3]) > 0.01
+
+    def test_get_all_poses_includes_rotation(self, estimator):
+        """Each pose dict should have 'rotation' key with 3x3 list."""
+        rng = np.random.RandomState(42)
+        for _ in range(3):
+            frame = rng.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+            estimator.update(frame)
+        poses = estimator.get_all_poses()
+        assert len(poses) == 3
+        for p in poses:
+            assert "rotation" in p
+            rot = p["rotation"]
+            assert len(rot) == 3
+            for row in rot:
+                assert len(row) == 3

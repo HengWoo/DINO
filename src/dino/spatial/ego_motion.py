@@ -83,4 +83,7 @@ class EgoMotionEstimator:
 
     def get_all_poses(self) -> list[dict]:
         """Return list of {position: [x, y, z]} dicts for JSON export."""
-        return [{"position": p[:3, 3].tolist()} for p in self.poses]
+        return [
+            {"position": p[:3, 3].tolist(), "rotation": p[:3, :3].tolist()}
+            for p in self.poses
+        ]

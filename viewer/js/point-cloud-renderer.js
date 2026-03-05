@@ -1,12 +1,15 @@
 /**
  * Point cloud renderer for the 3D depth panel.
  * Loads binary .bin files and renders accumulated per-frame point clouds.
+ * Supports V2 format with per-vertex RGB colors (magic 0x44494E4F).
  */
 import * as THREE from 'three';
 
-const POINT_COLOR = 0x38bdf8; // sky-400
+const FALLBACK_COLOR = [56 / 255, 189 / 255, 248 / 255]; // sky-400
 const POINT_SIZE = 3;
 const ACCUMULATE_FRAMES = 60; // keep last N frames for dense reconstruction
+
+const MAGIC_V2 = 0x44494E4F; // "DINO" in little-endian
 
 export class PointCloudRenderer {
   constructor(scene, sceneWidth, sceneHeight) {
@@ -20,8 +23,10 @@ export class PointCloudRenderer {
     this._geometry = null;
     this._material = null;
     this._scaleFactor = 0;
-    this._frameCache = new Map(); // frameIdx -> Float32Array (scaled)
+    this._frameCache = new Map(); // frameIdx -> { positions, colors }
     this._lastIdx = -1;
+    this._hasRgb = false;
+    this._headerSize = 8; // legacy default
   }
 
   async loadBinary(url) {
@@ -31,15 +36,40 @@ export class PointCloudRenderer {
     this.buffer = await resp.arrayBuffer();
     console.log('[PointCloud] Loaded:', (this.buffer.byteLength / 1024 / 1024).toFixed(1), 'MB');
     this._parseIndex();
-    console.log('[PointCloud] Frames:', this.numFrames);
+    console.log('[PointCloud] Frames:', this.numFrames, 'RGB:', this._hasRgb);
     this._computeScale();
     this._initPoints();
   }
 
   _parseIndex() {
     const view = new DataView(this.buffer);
-    this.numFrames = view.getUint32(0, true);
-    const indexOffset = view.getUint32(4, true);
+    const magic = view.getUint32(0, true);
+    let indexOffset;
+
+    if (magic === MAGIC_V2) {
+      // V2 header: u32 magic, u16 version, u16 flags, u32 indexOffset
+      this._headerSize = 12;
+      const version = view.getUint16(4, true);
+      if (version !== 2) {
+        throw new Error(`Unsupported point cloud format version: ${version}. Expected 2.`);
+      }
+      const flags = view.getUint16(6, true);
+      this._hasRgb = (flags & 1) !== 0;
+      indexOffset = view.getUint32(8, true);
+      if (indexOffset < this._headerSize || indexOffset > this.buffer.byteLength) {
+        throw new Error(`Corrupted point cloud: invalid index offset ${indexOffset} (file size ${this.buffer.byteLength})`);
+      }
+      // Count frames: each index entry is 12 bytes
+      this.numFrames = Math.floor((this.buffer.byteLength - indexOffset) / 12);
+    } else {
+      // Legacy header: u32 numFrames, u32 indexOffset
+      this._headerSize = 8;
+      this._hasRgb = false;
+      this.numFrames = view.getUint32(0, true);
+      indexOffset = view.getUint32(4, true);
+    }
+
+    // Read frame index (shared between V1 and V2)
     this.frameIndex = [];
     for (let i = 0; i < this.numFrames; i++) {
       const entryOffset = indexOffset + i * 12;
@@ -50,7 +80,6 @@ export class PointCloudRenderer {
   }
 
   _computeScale() {
-    // Sample a few frames to determine extent
     const sampled = [0, Math.floor(this.numFrames / 2), this.numFrames - 1];
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
@@ -58,7 +87,7 @@ export class PointCloudRenderer {
     for (const fi of sampled) {
       const entry = this.frameIndex[fi];
       if (!entry || entry.numPoints === 0) continue;
-      const dataOffset = entry.offset + 4;
+      const dataOffset = entry.offset + 4; // skip numPoints u32
       const fa = new Float32Array(this.buffer, dataOffset, entry.numPoints * 3);
       for (let i = 0; i < entry.numPoints; i++) {
         const b = i * 3;
@@ -66,6 +95,11 @@ export class PointCloudRenderer {
         if (fa[b+1] < minY) minY = fa[b+1]; if (fa[b+1] > maxY) maxY = fa[b+1];
         if (fa[b+2] < minZ) minZ = fa[b+2]; if (fa[b+2] > maxZ) maxZ = fa[b+2];
       }
+    }
+    if (minX === Infinity) {
+      console.warn('[PointCloud] No valid points found in sampled frames; defaulting scale to 1');
+      this._scaleFactor = 1;
+      return;
     }
     const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 0.01);
     this._scaleFactor = Math.min(this.sceneWidth, this.sceneHeight) * 0.35 / span;
@@ -75,7 +109,7 @@ export class PointCloudRenderer {
   _initPoints() {
     this._material = new THREE.PointsMaterial({
       size: POINT_SIZE,
-      color: POINT_COLOR,
+      vertexColors: true,
       sizeAttenuation: true,
       transparent: true,
       opacity: 0.7,
@@ -85,27 +119,42 @@ export class PointCloudRenderer {
       'position',
       new THREE.BufferAttribute(new Float32Array(0), 3)
     );
+    this._geometry.setAttribute(
+      'color',
+      new THREE.BufferAttribute(new Float32Array(0), 3)
+    );
     this.points = new THREE.Points(this._geometry, this._material);
     this.scene.add(this.points);
   }
 
   /**
-   * Read and scale a single frame's points (cached).
+   * Read and scale a single frame's points + colors (cached).
    */
   _getFramePoints(idx) {
     if (this._frameCache.has(idx)) return this._frameCache.get(idx);
     const entry = this.frameIndex[idx];
     if (!entry || entry.numPoints === 0) return null;
 
-    const dataOffset = entry.offset + 4;
-    const raw = new Float32Array(this.buffer, dataOffset, entry.numPoints * 3);
+    const N = entry.numPoints;
+    const dataOffset = entry.offset + 4; // skip numPoints u32
+    const raw = new Float32Array(this.buffer, dataOffset, N * 3);
     const s = this._scaleFactor || 1;
-    const out = new Float32Array(entry.numPoints * 3);
-    for (let i = 0; i < entry.numPoints; i++) {
+    const positions = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
       const b = i * 3;
-      out[b] = raw[b] * s;           // x
-      out[b + 1] = raw[b + 2] * s;   // z -> y (up)
-      out[b + 2] = -raw[b + 1] * s;  // -y -> z
+      positions[b] = raw[b] * s;           // x
+      positions[b + 1] = raw[b + 2] * s;   // z -> y (up)
+      positions[b + 2] = -raw[b + 1] * s;  // -y -> z
+    }
+
+    let colors = null;
+    if (this._hasRgb) {
+      const rgbOffset = entry.offset + 4 + N * 12; // after numPoints u32 + float32[N*3]
+      const rgbRaw = new Uint8Array(this.buffer, rgbOffset, N * 3);
+      colors = new Float32Array(N * 3);
+      for (let i = 0; i < N * 3; i++) {
+        colors[i] = rgbRaw[i] / 255;
+      }
     }
 
     // Evict old cache entries
@@ -113,8 +162,9 @@ export class PointCloudRenderer {
       const oldest = this._frameCache.keys().next().value;
       this._frameCache.delete(oldest);
     }
-    this._frameCache.set(idx, out);
-    return out;
+    const result = { positions, colors };
+    this._frameCache.set(idx, result);
+    return result;
   }
 
   /**
@@ -128,13 +178,13 @@ export class PointCloudRenderer {
 
     // Gather points from last ACCUMULATE_FRAMES frames
     const startIdx = Math.max(0, idx - ACCUMULATE_FRAMES + 1);
-    const arrays = [];
+    const frames = [];
     let totalPoints = 0;
     for (let f = startIdx; f <= idx; f++) {
-      const pts = this._getFramePoints(f);
-      if (pts) {
-        arrays.push(pts);
-        totalPoints += pts.length / 3;
+      const data = this._getFramePoints(f);
+      if (data) {
+        frames.push(data);
+        totalPoints += data.positions.length / 3;
       }
     }
 
@@ -142,23 +192,47 @@ export class PointCloudRenderer {
       this._geometry.setAttribute(
         'position', new THREE.BufferAttribute(new Float32Array(0), 3)
       );
+      this._geometry.setAttribute(
+        'color', new THREE.BufferAttribute(new Float32Array(0), 3)
+      );
       this._geometry.attributes.position.needsUpdate = true;
+      this._geometry.attributes.color.needsUpdate = true;
       return;
     }
 
     // Merge all frame arrays
-    const merged = new Float32Array(totalPoints * 3);
+    const mergedPos = new Float32Array(totalPoints * 3);
+    const mergedCol = new Float32Array(totalPoints * 3);
     let offset = 0;
-    for (const arr of arrays) {
-      merged.set(arr, offset);
-      offset += arr.length;
+    for (const frame of frames) {
+      mergedPos.set(frame.positions, offset);
+      if (frame.colors) {
+        mergedCol.set(frame.colors, offset);
+      } else {
+        // Fallback: sky-blue for legacy frames
+        const n = frame.positions.length;
+        for (let i = 0; i < n; i += 3) {
+          mergedCol[offset + i] = FALLBACK_COLOR[0];
+          mergedCol[offset + i + 1] = FALLBACK_COLOR[1];
+          mergedCol[offset + i + 2] = FALLBACK_COLOR[2];
+        }
+      }
+      offset += frame.positions.length;
     }
 
     this._geometry.setAttribute(
-      'position', new THREE.BufferAttribute(merged, 3)
+      'position', new THREE.BufferAttribute(mergedPos, 3)
+    );
+    this._geometry.setAttribute(
+      'color', new THREE.BufferAttribute(mergedCol, 3)
     );
     this._geometry.attributes.position.needsUpdate = true;
+    this._geometry.attributes.color.needsUpdate = true;
     this._geometry.computeBoundingSphere();
+  }
+
+  get scaleFactor() {
+    return this._scaleFactor;
   }
 
   dispose() {
