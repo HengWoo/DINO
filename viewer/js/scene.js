@@ -24,10 +24,11 @@ export function createSceneBundle(container, width, height, signal, { mode = 'or
   let camera;
 
   if (mode === 'gaussian') {
-    // Gaussian splat — wide FOV, generous near/far for COLMAP-scale scenes
+    // Gaussian splat — COLMAP coordinate system
+    // Scene: X [-9,7], Y [-6,4], Z [-3,13], center ~(0, -1, 4)
     camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000);
-    camera.position.set(0, 5, 10);
-    camera.lookAt(0, 0, 0);
+    camera.position.set(0, -1, -3);
+    camera.lookAt(0, -1, 5);
   } else if (mode === 'pointcloud') {
     // Tight camera for point cloud — closer view, no floor plan
     const size = Math.min(width, height) * 0.3;
@@ -68,6 +69,9 @@ export function createSceneBundle(container, width, height, signal, { mode = 'or
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enablePan = true;
   controls.enableZoom = true;
+  if (mode === 'gaussian') {
+    controls.target.set(0, -1, 5);
+  }
   if (mode === 'orthographic') {
     controls.enableRotate = false; // top-down: pan + zoom only
   } else {
