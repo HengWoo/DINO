@@ -1,6 +1,7 @@
 /**
  * Camera trail renderer.
- * Shows a polyline of the camera path and an arrow at the current position.
+ * Shows a polyline of the camera path, an arrow at the current position,
+ * and an AxesHelper showing camera orientation.
  */
 import * as THREE from 'three';
 
@@ -21,11 +22,12 @@ export class CameraTrail {
     this.poses = [];
     this.trailLine = null;
     this.arrow = null;
+    this.axesHelper = null;
     this._positions = [];
   }
 
   /**
-   * Set the full trail from poses array [{position: [x, y, z]}, ...].
+   * Set the full trail from poses array [{position: [x, y, z], rotation?: [[r00,r01,r02],[r10,r11,r12],[r20,r21,r22]]}, ...].
    */
   setTrail(poses) {
     this.dispose();
@@ -60,6 +62,11 @@ export class CameraTrail {
     this.arrow.position.copy(this._positions[0]);
     this.arrow.position.y += as;
     this.scene.add(this.arrow);
+
+    // Axes helper showing camera orientation
+    this.axesHelper = new THREE.AxesHelper(as * 0.8);
+    this.axesHelper.position.copy(this._positions[0]);
+    this.scene.add(this.axesHelper);
   }
 
   updateFrame(frameIdx) {
@@ -72,6 +79,28 @@ export class CameraTrail {
     if (this.arrow && this._positions[idx]) {
       this.arrow.position.copy(this._positions[idx]);
       this.arrow.position.y += this.arrowSize;
+    }
+    if (this.axesHelper && this._positions[idx]) {
+      this.axesHelper.position.copy(this._positions[idx]);
+
+      // Apply rotation if available
+      const pose = this.poses[idx];
+      if (pose && pose.rotation && pose.rotation.length === 3 &&
+          pose.rotation.every(row => Array.isArray(row) && row.length === 3)) {
+        const r = pose.rotation;
+        const m = new THREE.Matrix4();
+        // Set rotation part of 4x4 matrix from 3x3 rotation
+        m.set(
+          r[0][0], r[0][1], r[0][2], this.axesHelper.position.x,
+          r[1][0], r[1][1], r[1][2], this.axesHelper.position.y,
+          r[2][0], r[2][1], r[2][2], this.axesHelper.position.z,
+          0, 0, 0, 1
+        );
+        this.axesHelper.matrix.copy(m);
+        this.axesHelper.matrixAutoUpdate = false;
+      } else {
+        this.axesHelper.matrixAutoUpdate = true;
+      }
     }
   }
 
@@ -87,6 +116,11 @@ export class CameraTrail {
       this.arrow.geometry.dispose();
       this.arrow.material.dispose();
       this.arrow = null;
+    }
+    if (this.axesHelper) {
+      this.scene.remove(this.axesHelper);
+      this.axesHelper.dispose();
+      this.axesHelper = null;
     }
     this._positions = [];
     this.poses = [];

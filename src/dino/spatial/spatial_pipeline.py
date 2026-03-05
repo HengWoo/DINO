@@ -329,7 +329,7 @@ class SpatialPipeline:
             if self._cloud_writer is not None:
                 depth_map = self._localizer.last_depth_map
                 if depth_map is not None:
-                    self._cloud_writer.write_frame(depth_map, frame_pose)
+                    self._cloud_writer.write_frame(depth_map, frame_pose, rgb_frame=frame)
 
         # Set timestamp on all objects
         for obj in world_objects:
@@ -393,6 +393,7 @@ class SpatialPipeline:
                     "confidence": obj.confidence,
                     "bbox": obj.bbox_xyxy.tolist(),
                     "world_position": obj.world_position.tolist(),
+                    "bbox_3d": obj.bbox_3d.tolist() if obj.bbox_3d is not None else None,
                     "zone_id": obj.zone_id,
                 }
                 for obj in objects

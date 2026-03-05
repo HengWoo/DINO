@@ -62,3 +62,4 @@ class WorldObject:
     frame_idx: int = 0
     timestamp: float = 0.0
     zone_id: str | None = None
+    bbox_3d: np.ndarray | None = None  # (8,3) world-space corners

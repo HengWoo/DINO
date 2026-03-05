@@ -8,6 +8,7 @@ import { ZoneRenderer } from './zone-renderer.js';
 import { ObjectRenderer } from './object-renderer.js';
 import { CameraTrail } from './camera-trail.js';
 import { PointCloudRenderer } from './point-cloud-renderer.js';
+import { CloudObjectRenderer } from './cloud-object-renderer.js';
 import { GaussianSplatRenderer } from './gaussian-splat-renderer.js';
 import { Timeline } from './timeline.js';
 import { VideoPanel } from './video-panel.js';
@@ -99,6 +100,7 @@ async function initViewer(data) {
     let cloudBundle = null;
     let pointCloudRenderer = null;
     let gaussianRenderer = null;
+    let cloudObjectRenderer = null;
 
     if (hasCamera) {
       const cloudContainer = document.getElementById('depth-content');
@@ -136,6 +138,10 @@ async function initViewer(data) {
         setupCloudPanel('pointcloud');
         pointCloudRenderer = new PointCloudRenderer(cloudBundle.scene, metadata.width, metadata.height);
         disposables.push(pointCloudRenderer);
+
+        cloudObjectRenderer = new CloudObjectRenderer(cloudBundle.scene, 1);
+        disposables.push(cloudObjectRenderer);
+
         probeVideoUrl('point_clouds.bin').then(url => {
           if (url && !signal.aborted && pointCloudRenderer) {
             pointCloudRenderer.loadBinary(url).catch(err => {
@@ -200,6 +206,12 @@ async function initViewer(data) {
       // Point cloud
       if (pointCloudRenderer) {
         pointCloudRenderer.updateFrame(timeline ? timeline.currentKeyIndex : 0);
+      }
+
+      // 3D wireframe objects
+      if (cloudObjectRenderer) {
+        const sf = pointCloudRenderer ? pointCloudRenderer.scaleFactor : 1;
+        cloudObjectRenderer.updateObjects(frameData ? frameData.objects : null, sf);
       }
 
       // Timeline UI
