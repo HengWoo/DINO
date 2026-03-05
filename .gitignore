@@ -37,3 +37,11 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Large viewer assets (symlinked from output/)
+viewer/gaussian_splat.ply
+viewer/point_clouds.bin
+viewer/point_clouds.bin.gz
+viewer/*.mp4
+viewer/*.png
+output/
