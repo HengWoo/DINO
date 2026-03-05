@@ -27,6 +27,7 @@ export class PointCloudRenderer {
     this._lastIdx = -1;
     this._hasRgb = false;
     this._headerSize = 8; // legacy default
+    this._center = null; // {x, y, z} in scaled Three.js coords
   }
 
   async loadBinary(url) {
@@ -88,7 +89,8 @@ export class PointCloudRenderer {
       const entry = this.frameIndex[fi];
       if (!entry || entry.numPoints === 0) continue;
       const dataOffset = entry.offset + 4; // skip numPoints u32
-      const fa = new Float32Array(this.buffer, dataOffset, entry.numPoints * 3);
+      // Use slice() for alignment safety — V2 RGB bytes can cause unaligned offsets
+      const fa = new Float32Array(this.buffer.slice(dataOffset, dataOffset + entry.numPoints * 12));
       for (let i = 0; i < entry.numPoints; i++) {
         const b = i * 3;
         if (fa[b] < minX) minX = fa[b]; if (fa[b] > maxX) maxX = fa[b];
@@ -103,7 +105,15 @@ export class PointCloudRenderer {
     }
     const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 0.01);
     this._scaleFactor = Math.min(this.sceneWidth, this.sceneHeight) * 0.35 / span;
-    console.log('[PointCloud] Full extent:', span.toFixed(2), 'scale:', this._scaleFactor.toFixed(1));
+    // Center in Three.js coords: (x*s, z*s, -y*s)
+    const s = this._scaleFactor;
+    this._center = {
+      x: ((minX + maxX) / 2) * s,
+      y: ((minZ + maxZ) / 2) * s,
+      z: -((minY + maxY) / 2) * s,
+    };
+    console.log('[PointCloud] Full extent:', span.toFixed(2), 'scale:', this._scaleFactor.toFixed(1),
+      'center:', this._center.x.toFixed(0), this._center.y.toFixed(0), this._center.z.toFixed(0));
   }
 
   _initPoints() {
@@ -137,7 +147,8 @@ export class PointCloudRenderer {
 
     const N = entry.numPoints;
     const dataOffset = entry.offset + 4; // skip numPoints u32
-    const raw = new Float32Array(this.buffer, dataOffset, N * 3);
+    // Use slice() for alignment safety — V2 RGB bytes can cause unaligned offsets
+    const raw = new Float32Array(this.buffer.slice(dataOffset, dataOffset + N * 12));
     const s = this._scaleFactor || 1;
     const positions = new Float32Array(N * 3);
     for (let i = 0; i < N; i++) {
@@ -233,6 +244,10 @@ export class PointCloudRenderer {
 
   get scaleFactor() {
     return this._scaleFactor;
+  }
+
+  get center() {
+    return this._center;
   }
 
   dispose() {

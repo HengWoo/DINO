@@ -9,7 +9,6 @@ import { ObjectRenderer } from './object-renderer.js';
 import { CameraTrail } from './camera-trail.js';
 import { PointCloudRenderer } from './point-cloud-renderer.js';
 import { CloudObjectRenderer } from './cloud-object-renderer.js';
-import { GaussianSplatRenderer } from './gaussian-splat-renderer.js';
 import { Timeline } from './timeline.js';
 import { VideoPanel } from './video-panel.js';
 
@@ -96,75 +95,53 @@ async function initViewer(data) {
       disposables.push(topDownTrail);
     }
 
-    // --- 3D Gaussian Splat / Point Cloud panel (bare scene — no floor/zones/objects) ---
+    // --- 3D Point Cloud panel (bare scene — no floor/zones/objects) ---
     let cloudBundle = null;
     let pointCloudRenderer = null;
-    let gaussianRenderer = null;
     let cloudObjectRenderer = null;
 
     if (hasCamera) {
       const cloudContainer = document.getElementById('depth-content');
 
-      // Try gaussian splat first, fall back to point cloud
-      const gaussianUrl = await probeVideoUrl('gaussian_splat.ply');
+      // Always use point cloud renderer for center panel
+      cloudBundle = createSceneBundle(
+        cloudContainer, metadata.width, metadata.height, signal, { mode: 'pointcloud' }
+      );
+      disposables.push(cloudBundle.renderer, cloudBundle.labelRenderer);
 
-      function setupCloudPanel(mode) {
-        // Tear down previous bundle if rebuilding on fallback
-        if (cloudBundle) {
-          cloudBundle.renderer.dispose();
-          cloudBundle.renderer.domElement.remove();
-          cloudBundle.labelRenderer.domElement.remove();
-          if (cloudTrail) { cloudTrail.dispose(); cloudTrail = null; }
-          cloudContainer.replaceChildren();
+      // Camera trail
+      if (trailData && trailData.length > 0) {
+        const trailConfig = { scale: Math.min(metadata.width, metadata.height) * 0.35 / 15, arrowSize: 6 };
+        cloudTrail = new CameraTrail(cloudBundle.scene, trailConfig);
+        cloudTrail.setTrail(trailData);
+        disposables.push(cloudTrail);
+      }
+
+      pointCloudRenderer = new PointCloudRenderer(cloudBundle.scene, metadata.width, metadata.height);
+      disposables.push(pointCloudRenderer);
+
+      cloudObjectRenderer = new CloudObjectRenderer(cloudBundle.scene, 1);
+      disposables.push(cloudObjectRenderer);
+
+      probeVideoUrl('point_clouds.bin?v=' + Date.now()).then(url => {
+        if (url && !signal.aborted && pointCloudRenderer) {
+          pointCloudRenderer.loadBinary(url).then(() => {
+            // Reposition camera to center on point cloud
+            const c = pointCloudRenderer.center;
+            if (c && cloudBundle) {
+              const span = Math.min(metadata.width, metadata.height) * 0.35;
+              cloudBundle.camera.position.set(c.x, c.y + span * 0.4, c.z + span * 0.3);
+              cloudBundle.camera.lookAt(c.x, c.y, c.z);
+              cloudBundle.controls.target.set(c.x, c.y, c.z);
+              cloudBundle.controls.update();
+            }
+          }).catch(err => {
+            console.warn('[PointCloud] Load failed:', err.message);
+          });
         }
-        cloudBundle = createSceneBundle(
-          cloudContainer, metadata.width, metadata.height, signal, { mode }
-        );
-        disposables.push(cloudBundle.renderer, cloudBundle.labelRenderer);
-
-        // Camera trail
-        if (trailData && trailData.length > 0) {
-          const trailConfig = mode === 'gaussian'
-            ? { scale: 1, arrowSize: 0.3 }
-            : { scale: Math.min(metadata.width, metadata.height) * 0.35 / 15, arrowSize: 6 };
-          cloudTrail = new CameraTrail(cloudBundle.scene, trailConfig);
-          cloudTrail.setTrail(trailData);
-          disposables.push(cloudTrail);
-        }
-        return cloudBundle;
-      }
-
-      function loadPointCloud() {
-        setupCloudPanel('pointcloud');
-        pointCloudRenderer = new PointCloudRenderer(cloudBundle.scene, metadata.width, metadata.height);
-        disposables.push(pointCloudRenderer);
-
-        cloudObjectRenderer = new CloudObjectRenderer(cloudBundle.scene, 1);
-        disposables.push(cloudObjectRenderer);
-
-        probeVideoUrl('point_clouds.bin').then(url => {
-          if (url && !signal.aborted && pointCloudRenderer) {
-            pointCloudRenderer.loadBinary(url).catch(err => {
-              console.warn('[PointCloud] Load failed:', err.message);
-            });
-          }
-        }).catch(err => {
-          console.warn('[PointCloud] Probe failed:', err.message);
-        });
-      }
-
-      if (gaussianUrl && !signal.aborted) {
-        setupCloudPanel('gaussian');
-        gaussianRenderer = new GaussianSplatRenderer(cloudBundle.scene);
-        disposables.push(gaussianRenderer);
-        gaussianRenderer.load(gaussianUrl).catch(err => {
-          console.warn('[GaussianSplat] Load failed, falling back to point cloud:', err.message);
-          gaussianRenderer.dispose();
-          loadPointCloud();
-        });
-      } else {
-        loadPointCloud();
-      }
+      }).catch(err => {
+        console.warn('[PointCloud] Probe failed:', err.message);
+      });
     }
 
     // --- UI elements ---
