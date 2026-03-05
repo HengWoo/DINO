@@ -56,6 +56,11 @@ export async function probeVideoUrl(url) {
   try {
     const resp = await fetch(url, { method: 'HEAD' });
     if (resp.ok) return url;
-  } catch { /* ignore */ }
+    if (resp.status !== 404) {
+      console.warn(`[Probe] ${url} returned HTTP ${resp.status}`);
+    }
+  } catch (err) {
+    console.warn(`[Probe] ${url} failed:`, err.message);
+  }
   return null;
 }

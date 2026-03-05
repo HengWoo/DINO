@@ -11,6 +11,8 @@ export class GaussianSplatRenderer {
     this.scene = scene;
     this.splat = null;
     this._loaded = false;
+    this._disposed = false;
+    this._timeoutId = null;
   }
 
   /**
@@ -22,8 +24,8 @@ export class GaussianSplatRenderer {
   load(url) {
     console.log('[GaussianSplat] Loading:', url);
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        if (!this._loaded) {
+      this._timeoutId = setTimeout(() => {
+        if (!this._loaded && !this._disposed) {
           reject(new Error(`Gaussian splat load timed out after ${LOAD_TIMEOUT_MS / 1000}s`));
         }
       }, LOAD_TIMEOUT_MS);
@@ -32,15 +34,26 @@ export class GaussianSplatRenderer {
         this.splat = new SplatMesh({
           url,
           onLoad: () => {
-            clearTimeout(timeout);
+            clearTimeout(this._timeoutId);
+            this._timeoutId = null;
+            if (this._disposed) return;
             this._loaded = true;
             console.log('[GaussianSplat] Loaded successfully');
             resolve();
           },
+          // Spark may support onError for async load failures (network, parse).
+          // If not recognized, it is silently ignored and the timeout acts as fallback.
+          onError: (err) => {
+            clearTimeout(this._timeoutId);
+            this._timeoutId = null;
+            if (this._disposed) return;
+            reject(err instanceof Error ? err : new Error(String(err)));
+          },
         });
         this.scene.add(this.splat);
       } catch (err) {
-        clearTimeout(timeout);
+        clearTimeout(this._timeoutId);
+        this._timeoutId = null;
         reject(err);
       }
     });
@@ -51,6 +64,11 @@ export class GaussianSplatRenderer {
   }
 
   dispose() {
+    this._disposed = true;
+    if (this._timeoutId) {
+      clearTimeout(this._timeoutId);
+      this._timeoutId = null;
+    }
     if (this.splat) {
       try {
         this.scene.remove(this.splat);
