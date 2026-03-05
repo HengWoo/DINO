@@ -32,7 +32,7 @@ export class PointCloudRenderer {
 
   async loadBinary(url) {
     console.log('[PointCloud] Fetching:', url);
-    const resp = await fetch(url);
+    const resp = await fetch(url, { cache: 'no-store' });
     if (!resp.ok) throw new Error(`Failed to load point cloud: ${resp.status}`);
     this.buffer = await resp.arrayBuffer();
     console.log('[PointCloud] Loaded:', (this.buffer.byteLength / 1024 / 1024).toFixed(1), 'MB');
@@ -176,7 +176,7 @@ export class PointCloudRenderer {
       if (rgbEnd > this.buffer.byteLength) {
         console.warn(`[PointCloud] Frame ${idx}: RGB data truncated`);
       } else {
-        const rgbRaw = new Uint8Array(this.buffer, rgbOffset, N * 3);
+        const rgbRaw = new Uint8Array(this.buffer.slice(rgbOffset, rgbEnd));
         colors = new Float32Array(N * 3);
         for (let i = 0; i < N * 3; i++) {
           colors[i] = rgbRaw[i] / 255;
