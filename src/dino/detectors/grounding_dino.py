@@ -102,25 +102,40 @@ class GroundingDINODetector(BaseDetector):
 
         boxes = results["boxes"].cpu().numpy()
         scores = results["scores"].cpu().numpy()
-        labels = results["labels"]
+        # Use text_labels (new key) with fallback to labels (deprecated)
+        labels = results.get("text_labels", results.get("labels", []))
+
+        # Ensure consistent lengths — post-processor can return mismatched arrays
+        n_boxes = len(boxes)
+        if len(labels) != n_boxes or len(scores) != n_boxes:
+            min_len = min(n_boxes, len(scores), len(labels))
+            boxes = boxes[:min_len]
+            scores = scores[:min_len]
+            labels = labels[:min_len]
+
+        if not labels:
+            return sv.Detections.empty()
 
         raw_class_ids = np.array(
             [self._label_to_class_id(label, prompts) for label in labels],
             dtype=int,
-        ) if labels else np.array([], dtype=int)
+        )
 
         mask = raw_class_ids >= 0
-        if len(mask) > 0 and not mask.all():
+        if not mask.all():
             boxes = boxes[mask]
             scores = scores[mask]
             labels = [l for l, m in zip(labels, mask) if m]
             raw_class_ids = raw_class_ids[mask]
 
+        if len(boxes) == 0:
+            return sv.Detections.empty()
+
         return sv.Detections(
             xyxy=boxes,
             confidence=scores,
             class_id=raw_class_ids,
-            data={"class_name": np.array(labels) if labels else np.array([])},
+            data={"class_name": np.array(labels)},
         )
 
     @staticmethod

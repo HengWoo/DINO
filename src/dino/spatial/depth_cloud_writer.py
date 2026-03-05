@@ -27,7 +27,7 @@ class DepthCloudWriter:
         output_path: str | Path,
         intrinsics: CameraIntrinsics,
         pose_matrix: np.ndarray,
-        grid_step: int = 4,
+        grid_step: int = 8,
     ):
         self.output_path = Path(output_path)
         self.intrinsics = intrinsics

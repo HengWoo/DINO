@@ -8,6 +8,7 @@ export class VideoPanel {
     this.metadata = metadata;
     this.video = null;
     this.blobUrl = null;
+    this._isPlaying = false;
 
     this._buildDOM();
   }
@@ -22,6 +23,7 @@ export class VideoPanel {
     this.video.className = 'video-element';
     this.video.muted = true;
     this.video.playsInline = true;
+    this.video.loop = true;
     this.container.appendChild(this.video);
   }
 
@@ -54,9 +56,14 @@ export class VideoPanel {
    * Seek the video to match the given frame index.
    */
   seekToFrame(frameIdx, _frameData) {
+    const prevIdx = this._lastFrameIdx;
+    this._lastFrameIdx = frameIdx;
     if (!this.video.src) return;
     const fps = this.metadata.fps * (this.metadata.stride || 1);
-    this.video.currentTime = frameIdx / fps;
+    // Always seek on loop wrap (frameIdx jumped backwards) or when paused
+    if (!this._isPlaying || (prevIdx != null && frameIdx < prevIdx)) {
+      this.video.currentTime = frameIdx / fps;
+    }
   }
 
   /**
@@ -65,9 +72,15 @@ export class VideoPanel {
    * @param {number} speed - Playback speed multiplier.
    */
   setPlaying(isPlaying, speed) {
+    this._isPlaying = isPlaying;
     if (!this.video.src) return;
     this.video.playbackRate = speed;
     if (isPlaying) {
+      // Sync position before starting playback
+      const fps = this.metadata.fps * (this.metadata.stride || 1);
+      if (this._lastFrameIdx != null) {
+        this.video.currentTime = this._lastFrameIdx / fps;
+      }
       this.video.play().catch(() => {});
     } else {
       this.video.pause();

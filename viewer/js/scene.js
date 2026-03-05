@@ -23,7 +23,13 @@ export function createSceneBundle(container, width, height, signal, { mode = 'or
   const aspect = container.clientWidth / (container.clientHeight || 1);
   let camera;
 
-  if (mode === 'perspective') {
+  if (mode === 'pointcloud') {
+    // Tight camera for point cloud — closer view, no floor plan
+    const size = Math.min(width, height) * 0.3;
+    camera = new THREE.PerspectiveCamera(50, aspect, 1, 5000);
+    camera.position.set(0, size * 1.2, size * 1.0);
+    camera.lookAt(0, 0, 0);
+  } else if (mode === 'perspective') {
     camera = new THREE.PerspectiveCamera(60, aspect, 1, 5000);
     camera.position.set(0, Math.max(width, height) * 0.8, Math.max(width, height) * 0.6);
     camera.lookAt(0, 0, 0);
@@ -61,7 +67,7 @@ export function createSceneBundle(container, width, height, signal, { mode = 'or
     controls.enableRotate = false; // top-down: pan + zoom only
   } else {
     controls.enableRotate = true;
-    controls.maxPolarAngle = Math.PI / 2;
+    controls.maxPolarAngle = (mode === 'pointcloud') ? Math.PI : Math.PI / 2;
   }
 
   // Lights
