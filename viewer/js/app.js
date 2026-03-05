@@ -6,9 +6,9 @@ import { createSceneBundle, startRenderLoop } from './scene.js';
 import { createFloorPlan } from './floor-plan.js';
 import { ZoneRenderer } from './zone-renderer.js';
 import { ObjectRenderer } from './object-renderer.js';
-import { CameraRenderer } from './camera-renderer.js';
 import { CameraTrail } from './camera-trail.js';
 import { PointCloudRenderer } from './point-cloud-renderer.js';
+import { GaussianSplatRenderer } from './gaussian-splat-renderer.js';
 import { Timeline } from './timeline.js';
 import { VideoPanel } from './video-panel.js';
 
@@ -40,7 +40,7 @@ function cleanup() {
   }
 }
 
-function initViewer(data) {
+async function initViewer(data) {
   cleanup();
   abortController = new AbortController();
   const signal = abortController.signal;
@@ -75,37 +75,90 @@ function initViewer(data) {
     // --- Top-down panel (orthographic) ---
     const topDown = buildPanel('topdown-content', 'orthographic', false);
 
-    // --- Camera trail in top-down panel ---
-    let cameraTrail = null;
-    const trailData = getCameraTrail(data);
+    // --- Camera trail on top-down panel (scaled to pixel space) ---
+    const trailData = hasCamera ? getCameraTrail(data) : null;
+    let topDownTrail = null;
+    let cloudTrail = null;
+
     if (trailData && trailData.length > 0) {
-      cameraTrail = new CameraTrail(topDown.bundle.scene, metadata.width, metadata.height);
-      cameraTrail.setTrail(trailData);
-      disposables.push(cameraTrail);
+      // Scale ego-motion meters to pixel space for top-down view
+      // Trail spans ~15m, scene spans ~1280px → scale ~40
+      const sceneSize = Math.max(metadata.width, metadata.height);
+      const trailSpan = Math.max(
+        ...trailData.map(p => Math.abs(p.position[0])),
+        ...trailData.map(p => Math.abs(p.position[2])),
+        1
+      );
+      const topDownScale = (sceneSize * 0.3) / trailSpan;
+      topDownTrail = new CameraTrail(topDown.bundle.scene, { scale: topDownScale, arrowSize: 20 });
+      topDownTrail.setTrail(trailData);
+      disposables.push(topDownTrail);
     }
 
-    // --- 3D Depth panel (perspective, only if camera data) ---
-    let depth = null;
-    let cameraRenderer = null;
+    // --- 3D Gaussian Splat / Point Cloud panel (bare scene — no floor/zones/objects) ---
+    let cloudBundle = null;
     let pointCloudRenderer = null;
+    let gaussianRenderer = null;
 
     if (hasCamera) {
-      depth = buildPanel('depth-content', 'perspective', true);
-      cameraRenderer = new CameraRenderer(depth.bundle.scene);
-      cameraRenderer.renderCamera(metadata.camera);
-      disposables.push(cameraRenderer);
+      const cloudContainer = document.getElementById('depth-content');
 
-      // Point cloud renderer
-      pointCloudRenderer = new PointCloudRenderer(depth.bundle.scene);
-      disposables.push(pointCloudRenderer);
-      // Load point cloud binary (async, non-blocking)
-      probeVideoUrl('point_clouds.bin').then(url => {
-        if (url && !signal.aborted && pointCloudRenderer) {
-          pointCloudRenderer.loadBinary(url).catch(err => {
-            console.warn('Point cloud load failed:', err.message);
-          });
+      // Try gaussian splat first, fall back to point cloud
+      const gaussianUrl = await probeVideoUrl('gaussian_splat.ply');
+
+      function setupCloudPanel(mode) {
+        // Tear down previous bundle if rebuilding on fallback
+        if (cloudBundle) {
+          cloudBundle.renderer.dispose();
+          cloudBundle.renderer.domElement.remove();
+          cloudBundle.labelRenderer.domElement.remove();
+          if (cloudTrail) { cloudTrail.dispose(); cloudTrail = null; }
+          cloudContainer.replaceChildren();
         }
-      }).catch(() => {});
+        cloudBundle = createSceneBundle(
+          cloudContainer, metadata.width, metadata.height, signal, { mode }
+        );
+        disposables.push(cloudBundle.renderer, cloudBundle.labelRenderer);
+
+        // Camera trail
+        if (trailData && trailData.length > 0) {
+          const trailConfig = mode === 'gaussian'
+            ? { scale: 1, arrowSize: 0.3 }
+            : { scale: Math.min(metadata.width, metadata.height) * 0.35 / 15, arrowSize: 6 };
+          cloudTrail = new CameraTrail(cloudBundle.scene, trailConfig);
+          cloudTrail.setTrail(trailData);
+          disposables.push(cloudTrail);
+        }
+        return cloudBundle;
+      }
+
+      function loadPointCloud() {
+        setupCloudPanel('pointcloud');
+        pointCloudRenderer = new PointCloudRenderer(cloudBundle.scene, metadata.width, metadata.height);
+        disposables.push(pointCloudRenderer);
+        probeVideoUrl('point_clouds.bin').then(url => {
+          if (url && !signal.aborted && pointCloudRenderer) {
+            pointCloudRenderer.loadBinary(url).catch(err => {
+              console.warn('[PointCloud] Load failed:', err.message);
+            });
+          }
+        }).catch(err => {
+          console.warn('[PointCloud] Probe failed:', err.message);
+        });
+      }
+
+      if (gaussianUrl && !signal.aborted) {
+        setupCloudPanel('gaussian');
+        gaussianRenderer = new GaussianSplatRenderer(cloudBundle.scene);
+        disposables.push(gaussianRenderer);
+        gaussianRenderer.load(gaussianUrl).catch(err => {
+          console.warn('[GaussianSplat] Load failed, falling back to point cloud:', err.message);
+          gaussianRenderer.dispose();
+          loadPointCloud();
+        });
+      } else {
+        loadPointCloud();
+      }
     }
 
     // --- UI elements ---
@@ -137,16 +190,12 @@ function initViewer(data) {
       topDown.objectRenderer.updateObjects(frameData ? frameData.objects : null);
       topDown.zoneRenderer.updateFromFrame(frameData);
 
-      // Camera trail (uses key index, not raw frame_idx)
-      if (cameraTrail) {
-        cameraTrail.updateFrame(timeline ? timeline.currentKeyIndex : 0);
-      }
+      // Camera trails (uses key index, not raw frame_idx)
+      const keyIdx = timeline ? timeline.currentKeyIndex : 0;
+      if (topDownTrail) topDownTrail.updateFrame(keyIdx);
+      if (cloudTrail) cloudTrail.updateFrame(keyIdx);
 
-      // 3D Depth panel
-      if (depth) {
-        depth.objectRenderer.updateObjects(frameData ? frameData.objects : null);
-        depth.zoneRenderer.updateFromFrame(frameData);
-      }
+      // (Point cloud panel has no objects/zones — cloud updated below)
 
       // Point cloud
       if (pointCloudRenderer) {
@@ -198,13 +247,15 @@ function initViewer(data) {
     timeline.seekToKeyIndex(0);
 
     // --- Render loop — single RAF for all bundles ---
-    const bundles = [topDown.bundle, depth?.bundle].filter(Boolean);
+    const bundles = [topDown.bundle, cloudBundle].filter(Boolean);
     stopLoop = startRenderLoop(bundles);
 
     // --- Auto-load video ---
     probeVideoUrl('spatial_annotated.mp4').then(url => {
       if (url && !signal.aborted && videoPanel) videoPanel.loadVideo(url);
-    }).catch(() => {});
+    }).catch(err => {
+      console.warn('[Video] Auto-load failed:', err.message);
+    });
 
   } catch (err) {
     console.error('Failed to initialize viewer:', err);

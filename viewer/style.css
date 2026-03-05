@@ -41,7 +41,8 @@ h1 {
   grid-template-columns: 1fr 1fr;
 }
 
-#viewport-strip.two-col #panel-depth {
+#viewport-strip.two-col #panel-depth,
+#viewport-strip.two-col #panel-topdown {
   display: none;
 }
 

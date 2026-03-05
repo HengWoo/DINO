@@ -8,8 +8,9 @@
   <script type="importmap">
   {
     "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+      "three": "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.178.0/examples/jsm/",
+      "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/0.1.10/spark.module.js"
     }
   }
   </script>
@@ -33,13 +34,13 @@
         <div class="panel-label">Annotation</div>
         <div class="panel-content" id="annotation-content"></div>
       </div>
+      <div class="panel panel-center" id="panel-depth">
+        <div class="panel-label">3D Gaussian Splat</div>
+        <div class="panel-content" id="depth-content"></div>
+      </div>
       <div class="panel" id="panel-topdown">
         <div class="panel-label">Top-down</div>
         <div class="panel-content" id="topdown-content"></div>
-      </div>
-      <div class="panel" id="panel-depth">
-        <div class="panel-label">3D Depth</div>
-        <div class="panel-content" id="depth-content"></div>
       </div>
     </main>
     <footer id="timeline-bar">
