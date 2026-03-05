@@ -27,11 +27,12 @@ export class PointCloudRenderer {
     this._lastIdx = -1;
     this._hasRgb = false;
     this._headerSize = 8; // legacy default
+    this._center = null; // {x, y, z} in scaled Three.js coords
   }
 
   async loadBinary(url) {
     console.log('[PointCloud] Fetching:', url);
-    const resp = await fetch(url);
+    const resp = await fetch(url, { cache: 'no-store' });
     if (!resp.ok) throw new Error(`Failed to load point cloud: ${resp.status}`);
     this.buffer = await resp.arrayBuffer();
     console.log('[PointCloud] Loaded:', (this.buffer.byteLength / 1024 / 1024).toFixed(1), 'MB');
@@ -88,7 +89,13 @@ export class PointCloudRenderer {
       const entry = this.frameIndex[fi];
       if (!entry || entry.numPoints === 0) continue;
       const dataOffset = entry.offset + 4; // skip numPoints u32
-      const fa = new Float32Array(this.buffer, dataOffset, entry.numPoints * 3);
+      const end = dataOffset + entry.numPoints * 12;
+      if (end > this.buffer.byteLength) {
+        console.warn(`[PointCloud] Frame ${fi}: data extends beyond buffer`);
+        continue;
+      }
+      // Use slice() for alignment safety — V2 RGB bytes can cause unaligned offsets
+      const fa = new Float32Array(this.buffer.slice(dataOffset, end));
       for (let i = 0; i < entry.numPoints; i++) {
         const b = i * 3;
         if (fa[b] < minX) minX = fa[b]; if (fa[b] > maxX) maxX = fa[b];
@@ -99,11 +106,20 @@ export class PointCloudRenderer {
     if (minX === Infinity) {
       console.warn('[PointCloud] No valid points found in sampled frames; defaulting scale to 1');
       this._scaleFactor = 1;
+      this._center = { x: 0, y: 0, z: 0 };
       return;
     }
     const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 0.01);
     this._scaleFactor = Math.min(this.sceneWidth, this.sceneHeight) * 0.35 / span;
-    console.log('[PointCloud] Full extent:', span.toFixed(2), 'scale:', this._scaleFactor.toFixed(1));
+    // Center in Three.js coords: (x*s, z*s, -y*s)
+    const s = this._scaleFactor;
+    this._center = {
+      x: ((minX + maxX) / 2) * s,
+      y: ((minZ + maxZ) / 2) * s,
+      z: -((minY + maxY) / 2) * s,
+    };
+    console.log('[PointCloud] Full extent:', span.toFixed(2), 'scale:', this._scaleFactor.toFixed(1),
+      'center:', this._center.x.toFixed(0), this._center.y.toFixed(0), this._center.z.toFixed(0));
   }
 
   _initPoints() {
@@ -137,7 +153,13 @@ export class PointCloudRenderer {
 
     const N = entry.numPoints;
     const dataOffset = entry.offset + 4; // skip numPoints u32
-    const raw = new Float32Array(this.buffer, dataOffset, N * 3);
+    const xyzEnd = dataOffset + N * 12;
+    if (xyzEnd > this.buffer.byteLength) {
+      console.warn(`[PointCloud] Frame ${idx}: XYZ data truncated`);
+      return null;
+    }
+    // Use slice() for alignment safety — V2 RGB bytes can cause unaligned offsets
+    const raw = new Float32Array(this.buffer.slice(dataOffset, xyzEnd));
     const s = this._scaleFactor || 1;
     const positions = new Float32Array(N * 3);
     for (let i = 0; i < N; i++) {
@@ -150,10 +172,15 @@ export class PointCloudRenderer {
     let colors = null;
     if (this._hasRgb) {
       const rgbOffset = entry.offset + 4 + N * 12; // after numPoints u32 + float32[N*3]
-      const rgbRaw = new Uint8Array(this.buffer, rgbOffset, N * 3);
-      colors = new Float32Array(N * 3);
-      for (let i = 0; i < N * 3; i++) {
-        colors[i] = rgbRaw[i] / 255;
+      const rgbEnd = rgbOffset + N * 3;
+      if (rgbEnd > this.buffer.byteLength) {
+        console.warn(`[PointCloud] Frame ${idx}: RGB data truncated`);
+      } else {
+        const rgbRaw = new Uint8Array(this.buffer.slice(rgbOffset, rgbEnd));
+        colors = new Float32Array(N * 3);
+        for (let i = 0; i < N * 3; i++) {
+          colors[i] = rgbRaw[i] / 255;
+        }
       }
     }
 
@@ -181,10 +208,14 @@ export class PointCloudRenderer {
     const frames = [];
     let totalPoints = 0;
     for (let f = startIdx; f <= idx; f++) {
-      const data = this._getFramePoints(f);
-      if (data) {
-        frames.push(data);
-        totalPoints += data.positions.length / 3;
+      try {
+        const data = this._getFramePoints(f);
+        if (data) {
+          frames.push(data);
+          totalPoints += data.positions.length / 3;
+        }
+      } catch (err) {
+        console.warn(`[PointCloud] Failed to read frame ${f}:`, err.message);
       }
     }
 
@@ -233,6 +264,10 @@ export class PointCloudRenderer {
 
   get scaleFactor() {
     return this._scaleFactor;
+  }
+
+  get center() {
+    return this._center;
   }
 
   dispose() {
