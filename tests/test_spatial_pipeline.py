@@ -21,6 +21,7 @@ class TestSpatialConfig:
         assert config.rules is None
         assert config.depth_model is None
         assert config.camera_fov_deg == 70.0
+        assert config.annotate_zones_on_video is True
 
     def test_depth_mode_valid(self):
         config = SpatialConfig(camera_mode="depth")
@@ -731,6 +732,11 @@ class TestSpatialPipelineDepthMode:
         assert "intrinsics" in cam
         assert cam["intrinsics"]["width"] == 320
         assert cam["intrinsics"]["height"] == 240
+        # Camera trail should be present in depth mode with json_output
+        trail = data["metadata"]["camera_trail"]
+        assert isinstance(trail, list)
+        assert len(trail) > 0
+        assert "position" in trail[0]
 
     def test_fixed_mode_has_no_camera_metadata(self, tmp_path):
         from dino.spatial.spatial_pipeline import SpatialPipeline
@@ -750,3 +756,4 @@ class TestSpatialPipelineDepthMode:
             data = json.load(f)
 
         assert data["metadata"]["camera"] is None
+        assert data["metadata"]["camera_trail"] is None
