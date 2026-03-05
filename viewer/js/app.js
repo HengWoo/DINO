@@ -104,47 +104,60 @@ async function initViewer(data) {
       const cloudContainer = document.getElementById('depth-content');
 
       // Try gaussian splat first, fall back to point cloud
-      const gaussianUrl = await probeVideoUrl('gaussian_splat.ply').catch(() => null);
-      const sceneMode = gaussianUrl ? 'gaussian' : 'pointcloud';
+      const gaussianUrl = await probeVideoUrl('gaussian_splat.ply');
 
-      cloudBundle = createSceneBundle(
-        cloudContainer, metadata.width, metadata.height, signal, { mode: sceneMode }
-      );
-      disposables.push(cloudBundle.renderer, cloudBundle.labelRenderer);
+      function setupCloudPanel(mode) {
+        // Tear down previous bundle if rebuilding on fallback
+        if (cloudBundle) {
+          cloudBundle.renderer.dispose();
+          cloudBundle.renderer.domElement.remove();
+          cloudBundle.labelRenderer.domElement.remove();
+          if (cloudTrail) { cloudTrail.dispose(); cloudTrail = null; }
+          cloudContainer.replaceChildren();
+        }
+        cloudBundle = createSceneBundle(
+          cloudContainer, metadata.width, metadata.height, signal, { mode }
+        );
+        disposables.push(cloudBundle.renderer, cloudBundle.labelRenderer);
 
-      // Camera trail on center panel
-      if (trailData && trailData.length > 0) {
-        const pcScale = gaussianUrl
-          ? 1  // COLMAP coordinates are ~metric, no scaling needed
-          : Math.min(metadata.width, metadata.height) * 0.35 / 15;
-        const arrowSize = gaussianUrl ? 0.3 : 6;
-        cloudTrail = new CameraTrail(cloudBundle.scene, { scale: pcScale, arrowSize });
-        cloudTrail.setTrail(trailData);
-        disposables.push(cloudTrail);
+        // Camera trail
+        if (trailData && trailData.length > 0) {
+          const trailConfig = mode === 'gaussian'
+            ? { scale: 1, arrowSize: 0.3 }
+            : { scale: Math.min(metadata.width, metadata.height) * 0.35 / 15, arrowSize: 6 };
+          cloudTrail = new CameraTrail(cloudBundle.scene, trailConfig);
+          cloudTrail.setTrail(trailData);
+          disposables.push(cloudTrail);
+        }
+        return cloudBundle;
       }
 
-      if (gaussianUrl && !signal.aborted) {
-        // Gaussian splat renderer
-        gaussianRenderer = new GaussianSplatRenderer(cloudBundle.scene);
-        disposables.push(gaussianRenderer);
-        gaussianRenderer.load(gaussianUrl).catch(err => {
-          console.warn('Gaussian splat load failed, falling back to point cloud:', err.message);
-          _loadPointCloudFallback();
-        });
-      } else {
-        _loadPointCloudFallback();
-      }
-
-      function _loadPointCloudFallback() {
+      function loadPointCloud() {
+        setupCloudPanel('pointcloud');
         pointCloudRenderer = new PointCloudRenderer(cloudBundle.scene, metadata.width, metadata.height);
         disposables.push(pointCloudRenderer);
         probeVideoUrl('point_clouds.bin').then(url => {
           if (url && !signal.aborted && pointCloudRenderer) {
             pointCloudRenderer.loadBinary(url).catch(err => {
-              console.warn('Point cloud load failed:', err.message);
+              console.warn('[PointCloud] Load failed:', err.message);
             });
           }
-        }).catch(() => {});
+        }).catch(err => {
+          console.warn('[PointCloud] Probe failed:', err.message);
+        });
+      }
+
+      if (gaussianUrl && !signal.aborted) {
+        setupCloudPanel('gaussian');
+        gaussianRenderer = new GaussianSplatRenderer(cloudBundle.scene);
+        disposables.push(gaussianRenderer);
+        gaussianRenderer.load(gaussianUrl).catch(err => {
+          console.warn('[GaussianSplat] Load failed, falling back to point cloud:', err.message);
+          gaussianRenderer.dispose();
+          loadPointCloud();
+        });
+      } else {
+        loadPointCloud();
       }
     }
 
@@ -240,7 +253,9 @@ async function initViewer(data) {
     // --- Auto-load video ---
     probeVideoUrl('spatial_annotated.mp4').then(url => {
       if (url && !signal.aborted && videoPanel) videoPanel.loadVideo(url);
-    }).catch(() => {});
+    }).catch(err => {
+      console.warn('[Video] Auto-load failed:', err.message);
+    });
 
   } catch (err) {
     console.error('Failed to initialize viewer:', err);

@@ -72,7 +72,7 @@ export function createSceneBundle(container, width, height, signal, { mode = 'or
     controls.enableRotate = false; // top-down: pan + zoom only
   } else {
     controls.enableRotate = true;
-    controls.maxPolarAngle = (mode === 'pointcloud' || mode === 'gaussian') ? Math.PI : Math.PI / 2;
+    controls.maxPolarAngle = mode === 'perspective' ? Math.PI / 2 : Math.PI;
   }
 
   // Lights

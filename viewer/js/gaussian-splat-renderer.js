@@ -4,6 +4,8 @@
  */
 import { SplatMesh } from '@sparkjsdev/spark';
 
+const LOAD_TIMEOUT_MS = 60_000;
+
 export class GaussianSplatRenderer {
   constructor(scene) {
     this.scene = scene;
@@ -13,19 +15,35 @@ export class GaussianSplatRenderer {
 
   /**
    * Load a gaussian splat from a URL (.ply, .splat, .spz).
+   * Resolves when loading completes, rejects on error or timeout.
    * @param {string} url
    * @returns {Promise<void>}
    */
-  async load(url) {
+  load(url) {
     console.log('[GaussianSplat] Loading:', url);
-    this.splat = new SplatMesh({
-      url,
-      onLoad: () => {
-        this._loaded = true;
-        console.log('[GaussianSplat] Loaded successfully');
-      },
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        if (!this._loaded) {
+          reject(new Error(`Gaussian splat load timed out after ${LOAD_TIMEOUT_MS / 1000}s`));
+        }
+      }, LOAD_TIMEOUT_MS);
+
+      try {
+        this.splat = new SplatMesh({
+          url,
+          onLoad: () => {
+            clearTimeout(timeout);
+            this._loaded = true;
+            console.log('[GaussianSplat] Loaded successfully');
+            resolve();
+          },
+        });
+        this.scene.add(this.splat);
+      } catch (err) {
+        clearTimeout(timeout);
+        reject(err);
+      }
     });
-    this.scene.add(this.splat);
   }
 
   get loaded() {
@@ -34,9 +52,13 @@ export class GaussianSplatRenderer {
 
   dispose() {
     if (this.splat) {
-      this.scene.remove(this.splat);
-      if (typeof this.splat.dispose === 'function') {
-        this.splat.dispose();
+      try {
+        this.scene.remove(this.splat);
+        if (typeof this.splat.dispose === 'function') {
+          this.splat.dispose();
+        }
+      } catch (err) {
+        console.warn('[GaussianSplat] Dispose error:', err.message);
       }
       this.splat = null;
     }

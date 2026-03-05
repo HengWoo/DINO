@@ -2,6 +2,7 @@
 """Simple HTTP server for the DINO 3D Spatial Viewer.
 
 Adds gzip Content-Encoding for large files (.ply) and proper MIME types.
+Intended for local development only — do not expose to a network.
 """
 import argparse
 import gzip
@@ -35,29 +36,43 @@ class GzipHandler(http.server.SimpleHTTPRequestHandler):
         accept_gzip = "gzip" in self.headers.get("Accept-Encoding", "")
 
         if size > GZIP_THRESHOLD and accept_gzip:
-            self._serve_gzipped(path, size)
+            self._serve_gzipped(path)
         else:
             super().do_GET()
 
-    def _serve_gzipped(self, path, _original_size):
-        ext = os.path.splitext(path)[1].lower()
-        content_type = EXTRA_MIME_TYPES.get(ext) or self.guess_type(path)
+    def _serve_gzipped(self, path):
+        content_type = self.guess_type(path)
 
         try:
             with open(path, "rb") as f:
                 raw = f.read()
-        except OSError:
+        except FileNotFoundError:
             self.send_error(404, "File not found")
             return
+        except PermissionError:
+            self.send_error(403, "Permission denied")
+            return
+        except OSError as e:
+            self.log_error("Error reading %s: %s", path, e)
+            self.send_error(500, "Internal server error")
+            return
 
-        compressed = gzip.compress(raw, compresslevel=6)
+        try:
+            compressed = gzip.compress(raw, compresslevel=6)
+        except (MemoryError, OSError) as e:
+            self.log_error("Gzip compression failed for %s: %s", path, e)
+            self.send_error(500, "Compression failed")
+            return
 
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(compressed)))
         self.end_headers()
-        self.wfile.write(compressed)
+        try:
+            self.wfile.write(compressed)
+        except (BrokenPipeError, ConnectionResetError):
+            self.log_error("Client disconnected during transfer of %s", path)
 
     def guess_type(self, path):
         ext = os.path.splitext(path)[1].lower()
