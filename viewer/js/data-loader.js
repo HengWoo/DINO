@@ -41,6 +41,10 @@ export function getMetadata(data) {
   return data.metadata;
 }
 
+export function getCameraTrail(data) {
+  return data.metadata?.camera_trail || null;
+}
+
 export function getZones(data) {
   return data.zones || [];
 }

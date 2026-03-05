@@ -1,12 +1,14 @@
 /**
  * Main entry point for the DINO 3D Spatial Viewer.
  */
-import { loadData, buildFrameIndex, getMetadata, getZones, probeVideoUrl } from './data-loader.js';
+import { loadData, buildFrameIndex, getMetadata, getZones, getCameraTrail, probeVideoUrl } from './data-loader.js';
 import { createSceneBundle, startRenderLoop } from './scene.js';
 import { createFloorPlan } from './floor-plan.js';
 import { ZoneRenderer } from './zone-renderer.js';
 import { ObjectRenderer } from './object-renderer.js';
 import { CameraRenderer } from './camera-renderer.js';
+import { CameraTrail } from './camera-trail.js';
+import { PointCloudRenderer } from './point-cloud-renderer.js';
 import { Timeline } from './timeline.js';
 import { VideoPanel } from './video-panel.js';
 
@@ -73,15 +75,37 @@ function initViewer(data) {
     // --- Top-down panel (orthographic) ---
     const topDown = buildPanel('topdown-content', 'orthographic', false);
 
+    // --- Camera trail in top-down panel ---
+    let cameraTrail = null;
+    const trailData = getCameraTrail(data);
+    if (trailData && trailData.length > 0) {
+      cameraTrail = new CameraTrail(topDown.bundle.scene, metadata.width, metadata.height);
+      cameraTrail.setTrail(trailData);
+      disposables.push(cameraTrail);
+    }
+
     // --- 3D Depth panel (perspective, only if camera data) ---
     let depth = null;
     let cameraRenderer = null;
+    let pointCloudRenderer = null;
 
     if (hasCamera) {
       depth = buildPanel('depth-content', 'perspective', true);
       cameraRenderer = new CameraRenderer(depth.bundle.scene);
       cameraRenderer.renderCamera(metadata.camera);
       disposables.push(cameraRenderer);
+
+      // Point cloud renderer
+      pointCloudRenderer = new PointCloudRenderer(depth.bundle.scene);
+      disposables.push(pointCloudRenderer);
+      // Load point cloud binary (async, non-blocking)
+      probeVideoUrl('point_clouds.bin').then(url => {
+        if (url && !signal.aborted && pointCloudRenderer) {
+          pointCloudRenderer.loadBinary(url).catch(err => {
+            console.warn('Point cloud load failed:', err.message);
+          });
+        }
+      }).catch(() => {});
     }
 
     // --- UI elements ---
@@ -98,6 +122,10 @@ function initViewer(data) {
 
     function updatePlayPauseButton() {
       playPauseBtn.textContent = timeline.isPlaying ? PAUSE_SYMBOL : PLAY_SYMBOL;
+      // Sync video playback
+      if (videoPanel) {
+        videoPanel.setPlaying(timeline.isPlaying, timeline.speed);
+      }
     }
 
     // --- Frame change handler — fan out to all panels ---
@@ -109,10 +137,20 @@ function initViewer(data) {
       topDown.objectRenderer.updateObjects(frameData ? frameData.objects : null);
       topDown.zoneRenderer.updateFromFrame(frameData);
 
+      // Camera trail (uses key index, not raw frame_idx)
+      if (cameraTrail) {
+        cameraTrail.updateFrame(timeline ? timeline.currentKeyIndex : 0);
+      }
+
       // 3D Depth panel
       if (depth) {
         depth.objectRenderer.updateObjects(frameData ? frameData.objects : null);
         depth.zoneRenderer.updateFromFrame(frameData);
+      }
+
+      // Point cloud
+      if (pointCloudRenderer) {
+        pointCloudRenderer.updateFrame(timeline ? timeline.currentKeyIndex : 0);
       }
 
       // Timeline UI
@@ -144,6 +182,7 @@ function initViewer(data) {
     stepForwardBtn.addEventListener('click', () => timeline.step(1), { signal });
     speedSelect.addEventListener('change', () => {
       timeline.setSpeed(parseFloat(speedSelect.value));
+      if (videoPanel) videoPanel.setPlaying(timeline.isPlaying, timeline.speed);
     }, { signal });
 
     document.addEventListener('keydown', (e) => {

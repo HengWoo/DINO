@@ -33,14 +33,16 @@ class DepthLocalizer(BaseLocalizer):
         self._intrinsics = intrinsics
         self._pose = pose
         self._depth = depth_estimator
+        self.last_depth_map: np.ndarray | None = None
 
     def localize(
         self, detections: sv.Detections, frame: np.ndarray, frame_idx: int
     ) -> list[WorldObject]:
+        depth_map = self._depth.estimate(frame)
+        self.last_depth_map = depth_map
+
         if len(detections) == 0:
             return []
-
-        depth_map = self._depth.estimate(frame)
         h, w = depth_map.shape
 
         if detections.tracker_id is None:
