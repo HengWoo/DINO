@@ -18,20 +18,23 @@ class TestEgoMotionEstimator:
         return EgoMotionEstimator(intrinsics)
 
     def test_first_frame_returns_identity(self, estimator):
-        frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        rng = np.random.RandomState(42)
+        frame = rng.randint(0, 255, (480, 640, 3), dtype=np.uint8)
         pose = estimator.update(frame)
         assert pose.shape == (4, 4)
         np.testing.assert_array_almost_equal(pose, np.eye(4))
 
     def test_poses_accumulate(self, estimator):
+        rng = np.random.RandomState(42)
         for _ in range(3):
-            frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+            frame = rng.randint(0, 255, (480, 640, 3), dtype=np.uint8)
             estimator.update(frame)
         assert len(estimator.poses) == 3
 
     def test_get_all_poses_format(self, estimator):
+        rng = np.random.RandomState(42)
         for _ in range(3):
-            frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+            frame = rng.randint(0, 255, (480, 640, 3), dtype=np.uint8)
             estimator.update(frame)
         poses = estimator.get_all_poses()
         assert len(poses) == 3
@@ -41,10 +44,10 @@ class TestEgoMotionEstimator:
 
     def test_identical_frames_no_motion(self, estimator):
         """Identical frames should produce near-zero displacement."""
-        frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        rng = np.random.RandomState(42)
+        frame = rng.randint(0, 255, (480, 640, 3), dtype=np.uint8)
         estimator.update(frame.copy())
         pose = estimator.update(frame.copy())
-        # Should be identity or near-identity
         np.testing.assert_array_almost_equal(pose[:3, 3], [0, 0, 0], decimal=1)
 
     def test_empty_frame_no_crash(self, estimator):
@@ -52,3 +55,15 @@ class TestEgoMotionEstimator:
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         pose = estimator.update(frame)
         assert pose.shape == (4, 4)
+
+    def test_shifted_frame_produces_displacement(self, estimator):
+        """A horizontally shifted frame should produce non-zero X displacement."""
+        rng = np.random.RandomState(42)
+        frame1 = rng.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        # Shift right by 20 pixels
+        frame2 = np.zeros_like(frame1)
+        frame2[:, 20:] = frame1[:, :-20]
+        estimator.update(frame1)
+        pose = estimator.update(frame2)
+        # X translation should be non-zero
+        assert abs(pose[0, 3]) > 0.01

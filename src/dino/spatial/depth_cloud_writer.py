@@ -36,6 +36,14 @@ class DepthCloudWriter:
         self.frame_offsets: list[tuple[int, int]] = []
         self._file: BinaryIO | None = None
 
+    def __enter__(self):
+        self.open()
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
     def open(self) -> None:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self._file = open(self.output_path, "wb")
@@ -86,6 +94,12 @@ class DepthCloudWriter:
         if self._file is None:
             return
         index_offset = self._file.tell()
+        if index_offset > 0xFFFFFFFF:
+            logger.error(
+                "Point cloud file exceeds 4GB (%d bytes). "
+                "Increase grid_step or reduce frame count.",
+                index_offset,
+            )
         for off, n in self.frame_offsets:
             self._file.write(struct.pack("<QI", off, n))
         # Update header

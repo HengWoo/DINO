@@ -139,6 +139,7 @@ class SpatialPipeline:
             input_path: Path to input video.
             output_path: Path for annotated output video.
             json_output: Optional path to export spatial results as JSON.
+            point_cloud_output: Optional path to export depth point clouds as binary .bin.
             progress_callback: Optional callback(processed_count, total_frames).
 
         Returns:
@@ -166,8 +167,9 @@ class SpatialPipeline:
             self._camera_intrinsics = intrinsics
             self._camera_pose = pose
 
-            # Ego-motion estimator for camera trail
-            self._ego_motion = EgoMotionEstimator(intrinsics)
+            # Ego-motion estimator for camera trail (only when needed)
+            if point_cloud_output or json_output:
+                self._ego_motion = EgoMotionEstimator(intrinsics)
 
             # Point cloud writer
             if point_cloud_output:
@@ -202,43 +204,43 @@ class SpatialPipeline:
         results = SpatialResults()
         processed = 0
 
-        with sv.VideoSink(output_path, output_info) as sink:
-            for frame_idx, frame in enumerate(frame_generator):
-                if frame_idx % self.config.stride != 0:
-                    continue
+        try:
+            with sv.VideoSink(output_path, output_info) as sink:
+                for frame_idx, frame in enumerate(frame_generator):
+                    if frame_idx % self.config.stride != 0:
+                        continue
 
-                timestamp = frame_idx / video_info.fps if video_info.fps > 0 else 0.0
+                    timestamp = frame_idx / video_info.fps if video_info.fps > 0 else 0.0
 
-                try:
-                    frame_result = self._process_frame(
-                        frame, frame_idx, timestamp, sink
-                    )
-                except (TypeError, ValueError, OSError) as e:
-                    raise RuntimeError(
-                        f"Error processing frame {frame_idx}: {e}"
-                    ) from e
-
-                results.frame_results.append(frame_result)
-
-                # Accumulate observations and events
-                results.observations.extend(frame_result.get("observations", []))
-                results.events.extend(frame_result.get("events", []))
-
-                processed += 1
-                if progress_callback is not None:
                     try:
-                        progress_callback(processed, total_frames)
-                    except Exception:
-                        logger.error(
-                            "progress_callback raised an exception; "
-                            "disabling further callbacks for this run",
-                            exc_info=True,
+                        frame_result = self._process_frame(
+                            frame, frame_idx, timestamp, sink
                         )
-                        progress_callback = None
+                    except (TypeError, ValueError, OSError) as e:
+                        raise RuntimeError(
+                            f"Error processing frame {frame_idx}: {e}"
+                        ) from e
 
-        # Close point cloud writer
-        if self._cloud_writer is not None:
-            self._cloud_writer.close()
+                    results.frame_results.append(frame_result)
+
+                    # Accumulate observations and events
+                    results.observations.extend(frame_result.get("observations", []))
+                    results.events.extend(frame_result.get("events", []))
+
+                    processed += 1
+                    if progress_callback is not None:
+                        try:
+                            progress_callback(processed, total_frames)
+                        except Exception:
+                            logger.error(
+                                "progress_callback raised an exception; "
+                                "disabling further callbacks for this run",
+                                exc_info=True,
+                            )
+                            progress_callback = None
+        finally:
+            if self._cloud_writer is not None:
+                self._cloud_writer.close()
 
         if json_output:
             json_path = Path(json_output)
@@ -325,7 +327,7 @@ class SpatialPipeline:
         if self._ego_motion is not None:
             frame_pose = self._ego_motion.update(frame)
             if self._cloud_writer is not None:
-                depth_map = getattr(self._localizer, "last_depth_map", None)
+                depth_map = self._localizer.last_depth_map
                 if depth_map is not None:
                     self._cloud_writer.write_frame(depth_map, frame_pose)
 

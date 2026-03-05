@@ -25,23 +25,37 @@ class EgoMotionEstimator:
         self.cumulative_pose = np.eye(4)  # world_T_cam
         self.poses: list[np.ndarray] = []
 
+    def _fallback_pose(self) -> np.ndarray:
+        """Return the current cumulative pose (reuse last known position)."""
+        pose = self.cumulative_pose.copy()
+        self.poses.append(pose)
+        return pose
+
     def update(self, frame_bgr: np.ndarray) -> np.ndarray:
         """Process one frame, return 4x4 world_T_cam pose."""
-        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        kp, des = self.orb.detectAndCompute(gray, None)
+        try:
+            gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+            kp, des = self.orb.detectAndCompute(gray, None)
+        except cv2.error as e:
+            logger.warning("Ego-motion ORB failed: %s; reusing last pose", e)
+            return self._fallback_pose()
 
         if self.prev_des is None or des is None or len(kp) < 10:
+            logger.debug(
+                "Ego-motion: insufficient keypoints (%d); reusing last pose",
+                len(kp) if kp else 0,
+            )
             self.prev_gray, self.prev_kp, self.prev_des = gray, kp, des
-            pose = self.cumulative_pose.copy()
-            self.poses.append(pose)
-            return pose
+            return self._fallback_pose()
 
         matches = self.bf.match(self.prev_des, des)
         if len(matches) < 10:
+            logger.debug(
+                "Ego-motion: insufficient matches (%d); reusing last pose",
+                len(matches),
+            )
             self.prev_gray, self.prev_kp, self.prev_des = gray, kp, des
-            pose = self.cumulative_pose.copy()
-            self.poses.append(pose)
-            return pose
+            return self._fallback_pose()
 
         src_pts = np.float32([self.prev_kp[m.queryIdx].pt for m in matches])
         dst_pts = np.float32([kp[m.trainIdx].pt for m in matches])
@@ -59,6 +73,8 @@ class EgoMotionEstimator:
             delta[0, 3] = dx
             delta[2, 3] = dz
             self.cumulative_pose = self.cumulative_pose @ delta
+        else:
+            logger.debug("Ego-motion: RANSAC failed; reusing last pose")
 
         pose = self.cumulative_pose.copy()
         self.prev_gray, self.prev_kp, self.prev_des = gray, kp, des

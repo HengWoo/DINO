@@ -102,7 +102,7 @@ class TestDepthLocalizer:
         assert obj.frame_idx == 7
 
     def test_empty_detections(self):
-        """Empty detections should return empty list without running depth."""
+        """Empty detections should return empty list but still compute depth map."""
         localizer, mock_estimator = self._make_localizer()
         dets = sv.Detections.empty()
         frame = np.zeros((240, 320, 3), dtype=np.uint8)
@@ -110,8 +110,9 @@ class TestDepthLocalizer:
         objects = localizer.localize(dets, frame, frame_idx=0)
 
         assert objects == []
-        # Depth estimation should NOT run for empty detections (optimization)
-        mock_estimator.estimate.assert_not_called()
+        # Depth estimation runs even for empty detections (needed for point cloud export)
+        mock_estimator.estimate.assert_called_once()
+        assert localizer.last_depth_map is not None
 
     def test_no_tracker_id_uses_minus_one(self):
         """Detections without tracker_id should use -1."""

@@ -100,3 +100,77 @@ class TestDepthCloudWriter:
         data = output.read_bytes()
         num_frames = struct.unpack_from("<I", data, 0)[0]
         assert num_frames == 1
+
+    def test_round_trip_point_data(self, tmp_path, intrinsics):
+        """Read back point data and verify backprojection math."""
+        pose = np.eye(4)
+        output = tmp_path / "cloud.bin"
+        # Use large grid_step so we get few, predictable points
+        writer = DepthCloudWriter(output, intrinsics, pose, grid_step=640)
+        writer.open()
+
+        # Single depth value at pixel (0, 0), depth = 2.0
+        depth_map = np.full((480, 640), 2.0, dtype=np.float32)
+        writer.write_frame(depth_map)
+        writer.close()
+
+        data = output.read_bytes()
+        n_points = struct.unpack_from("<I", data, 8)[0]
+        assert n_points > 0
+
+        # Parse float32 xyz triplets
+        points = np.frombuffer(
+            data, dtype=np.float32, count=n_points * 3, offset=12
+        ).reshape(-1, 3)
+
+        # With identity pose: x_cam = (u - cx) * depth / fx
+        # First sample point is u=0, v=0, depth=2.0
+        expected_x = (0 - intrinsics.cx) * 2.0 / intrinsics.fx
+        expected_y = (0 - intrinsics.cy) * 2.0 / intrinsics.fy
+        expected_z = 2.0
+        np.testing.assert_almost_equal(points[0, 0], expected_x, decimal=3)
+        np.testing.assert_almost_equal(points[0, 1], expected_y, decimal=3)
+        np.testing.assert_almost_equal(points[0, 2], expected_z, decimal=3)
+
+    def test_pose_translation_applied_to_points(self, tmp_path, intrinsics):
+        """Points should be offset by the pose translation."""
+        pose = np.eye(4)
+        pose[0, 3] = 10.0  # translate +10 in X
+        output = tmp_path / "cloud.bin"
+        writer = DepthCloudWriter(output, intrinsics, pose, grid_step=640)
+        writer.open()
+
+        depth_map = np.full((480, 640), 2.0, dtype=np.float32)
+        writer.write_frame(depth_map)
+        writer.close()
+
+        data = output.read_bytes()
+        n_points = struct.unpack_from("<I", data, 8)[0]
+        points = np.frombuffer(
+            data, dtype=np.float32, count=n_points * 3, offset=12
+        ).reshape(-1, 3)
+
+        # All X coordinates should include the +10 offset
+        # x_cam = (u - cx) * depth / fx, with cx=320 and first sample u=0:
+        # x_cam = -1.28, x_world = -1.28 + 10.0 = 8.72
+        # Compare with identity-pose result to verify offset
+        writer2 = DepthCloudWriter(tmp_path / "ref.bin", intrinsics, np.eye(4), grid_step=640)
+        writer2.open()
+        writer2.write_frame(depth_map)
+        writer2.close()
+        ref_data = (tmp_path / "ref.bin").read_bytes()
+        ref_n = struct.unpack_from("<I", ref_data, 8)[0]
+        ref_pts = np.frombuffer(ref_data, dtype=np.float32, count=ref_n * 3, offset=12).reshape(-1, 3)
+        # Offset should be ~10.0 in X
+        np.testing.assert_almost_equal(points[:, 0] - ref_pts[:, 0], 10.0, decimal=2)
+
+    def test_context_manager(self, tmp_path, intrinsics, pose_matrix):
+        """Context manager should open/close correctly."""
+        output = tmp_path / "cloud.bin"
+        with DepthCloudWriter(output, intrinsics, pose_matrix, grid_step=64) as writer:
+            depth_map = np.full((480, 640), 2.0, dtype=np.float32)
+            writer.write_frame(depth_map)
+
+        data = output.read_bytes()
+        num_frames = struct.unpack_from("<I", data, 0)[0]
+        assert num_frames == 1
