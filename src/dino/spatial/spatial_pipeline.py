@@ -14,6 +14,8 @@ from dino.annotation.annotator import FrameAnnotator
 from dino.annotation.zone_annotator import ZoneAnnotator
 from dino.config import PipelineConfig, SpatialConfig
 from dino.detectors.base import BaseDetector
+from dino.spatial.depth_cloud_writer import DepthCloudWriter
+from dino.spatial.ego_motion import EgoMotionEstimator
 from dino.spatial.fixed_camera_localizer import FixedCameraLocalizer
 from dino.spatial.models import WorldObject
 from dino.spatial.registry import SpatialObjectRegistry
@@ -63,6 +65,8 @@ class SpatialPipeline:
         self._camera_intrinsics = None
         self._camera_pose = None
         self._depth_estimator = None
+        self._ego_motion: EgoMotionEstimator | None = None
+        self._cloud_writer: DepthCloudWriter | None = None
 
         if spatial_config.camera_mode == "fixed":
             self._localizer = FixedCameraLocalizer()
@@ -126,6 +130,7 @@ class SpatialPipeline:
         input_path: str,
         output_path: str,
         json_output: str | None = None,
+        point_cloud_output: str | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> SpatialResults:
         """Process a video file with full spatial pipeline.
@@ -160,6 +165,19 @@ class SpatialPipeline:
             self._localizer = DepthLocalizer(intrinsics, pose, self._depth_estimator)
             self._camera_intrinsics = intrinsics
             self._camera_pose = pose
+
+            # Ego-motion estimator for camera trail
+            self._ego_motion = EgoMotionEstimator(intrinsics)
+
+            # Point cloud writer
+            if point_cloud_output:
+                pose_4x4 = np.eye(4)
+                pose_4x4[:3, :3] = pose.rotation
+                pose_4x4[:3, 3] = pose.translation
+                self._cloud_writer = DepthCloudWriter(
+                    point_cloud_output, intrinsics, pose_4x4
+                )
+                self._cloud_writer.open()
 
         if video_info.fps <= 0:
             raise ValueError(
@@ -218,6 +236,10 @@ class SpatialPipeline:
                         )
                         progress_callback = None
 
+        # Close point cloud writer
+        if self._cloud_writer is not None:
+            self._cloud_writer.close()
+
         if json_output:
             json_path = Path(json_output)
             json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,6 +259,10 @@ class SpatialPipeline:
                         },
                     }
 
+                camera_trail = None
+                if self._ego_motion is not None:
+                    camera_trail = self._ego_motion.get_all_poses()
+
                 with open(tmp_path, "w") as f:
                     json.dump(
                         {
@@ -248,6 +274,7 @@ class SpatialPipeline:
                                 "duration_sec": round(total_frames / adjusted_fps, 3),
                                 "stride": self.config.stride,
                                 "camera": camera_meta,
+                                "camera_trail": camera_trail,
                             },
                             "zones": [
                                 {"zone_id": z.zone_id, "name": z.name, "polygon": z.polygon.tolist()}
@@ -294,6 +321,14 @@ class SpatialPipeline:
             )
         world_objects = self._localizer.localize(detections, frame, frame_idx)
 
+        # Ego-motion update + point cloud export (depth mode only)
+        if self._ego_motion is not None:
+            frame_pose = self._ego_motion.update(frame)
+            if self._cloud_writer is not None:
+                depth_map = getattr(self._localizer, "last_depth_map", None)
+                if depth_map is not None:
+                    self._cloud_writer.write_frame(depth_map, frame_pose)
+
         # Set timestamp on all objects
         for obj in world_objects:
             obj.timestamp = timestamp
@@ -316,8 +351,8 @@ class SpatialPipeline:
         # Annotate: base (boxes/labels/traces)
         annotated = self._annotator.annotate(frame, detections)
 
-        # Annotate: zones
-        if self._zones:
+        # Annotate: zones (gated by config flag)
+        if self._zones and self.spatial_config.annotate_zones_on_video:
             zone_states = {}
             for zone in self._zones:
                 state = self._zone_manager.get_zone_state(zone.zone_id)

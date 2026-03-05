@@ -32,6 +32,14 @@ def main():
         help="Depth estimation model ID (default: Depth-Anything-V2-Small)",
     )
     parser.add_argument(
+        "--no-zone-overlay", action="store_true",
+        help="Disable zone annotations on output video (show bboxes only)",
+    )
+    parser.add_argument(
+        "--point-cloud", action="store_true",
+        help="Export depth maps as binary point cloud (.bin)",
+    )
+    parser.add_argument(
         "--stride", type=int, default=1, help="Process every Nth frame"
     )
     parser.add_argument(
@@ -58,6 +66,7 @@ def main():
             zones_path=args.zones,
             depth_model=args.depth_model,
             camera_fov_deg=args.camera_fov,
+            annotate_zones_on_video=not args.no_zone_overlay,
         )
 
         print("Loading Grounding DINO...")
@@ -73,6 +82,9 @@ def main():
 
         output_video = str(output_dir / "spatial_annotated.mp4")
         json_output = str(output_dir / "spatial_results.json")
+        point_cloud_output = (
+            str(output_dir / "point_clouds.bin") if args.point_cloud else None
+        )
 
         print(f"Processing: {args.input}")
         print(f"Output video: {output_video}")
@@ -84,7 +96,11 @@ def main():
             print(f"\rFrame {processed}/{total}", end="", flush=True)
 
         results = pipeline.run(
-            args.input, output_video, json_output=json_output, progress_callback=progress
+            args.input,
+            output_video,
+            json_output=json_output,
+            point_cloud_output=point_cloud_output,
+            progress_callback=progress,
         )
 
         print(f"\n\nDone! Processed {len(results.frame_results)} frames.")

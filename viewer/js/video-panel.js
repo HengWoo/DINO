@@ -59,6 +59,21 @@ export class VideoPanel {
     this.video.currentTime = frameIdx / fps;
   }
 
+  /**
+   * Sync video playback state with the timeline.
+   * @param {boolean} isPlaying - Whether timeline is playing.
+   * @param {number} speed - Playback speed multiplier.
+   */
+  setPlaying(isPlaying, speed) {
+    if (!this.video.src) return;
+    this.video.playbackRate = speed;
+    if (isPlaying) {
+      this.video.play().catch(() => {});
+    } else {
+      this.video.pause();
+    }
+  }
+
   _revokeBlobUrl() {
     if (this.blobUrl) {
       URL.revokeObjectURL(this.blobUrl);

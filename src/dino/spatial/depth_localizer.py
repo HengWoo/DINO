@@ -41,6 +41,8 @@ class DepthLocalizer(BaseLocalizer):
             return []
 
         depth_map = self._depth.estimate(frame)
+        # Store last depth map for external consumers (e.g. point cloud export)
+        self.last_depth_map = depth_map
         h, w = depth_map.shape
 
         if detections.tracker_id is None:

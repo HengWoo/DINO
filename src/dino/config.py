@@ -31,6 +31,7 @@ class SpatialConfig:
     rules: list[dict] | None = None
     depth_model: str | None = None
     camera_fov_deg: float = 70.0
+    annotate_zones_on_video: bool = True
 
     def __post_init__(self):
         if self.camera_mode not in ("fixed", "depth"):
