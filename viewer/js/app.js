@@ -43,7 +43,9 @@ function cleanup() {
 function positionCameraOnCloud(renderer, bundle, sceneSpan) {
   const c = renderer.center;
   if (c && bundle) {
-    bundle.camera.position.set(c.x, c.y + sceneSpan * 0.4, c.z + sceneSpan * 0.3);
+    // Foxglove-style 3/4 elevated view: mostly above, slightly behind
+    const d = sceneSpan * 0.8;
+    bundle.camera.position.set(c.x + d * 0.2, c.y + d * 0.8, c.z + d * 0.4);
     bundle.controls.target.set(c.x, c.y, c.z);
     bundle.controls.update();
   }

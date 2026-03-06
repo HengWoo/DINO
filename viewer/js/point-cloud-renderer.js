@@ -8,6 +8,7 @@ import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 
 const FALLBACK_COLOR = [56 / 255, 189 / 255, 248 / 255]; // sky-400
 const POINT_SIZE = 3;
+const PLY_POINT_SIZE = 1;
 const ACCUMULATE_FRAMES = 60; // keep last N frames for dense reconstruction
 const SAT_BOOST = 1.3;
 const GAMMA = 0.85;
@@ -79,15 +80,46 @@ export class PointCloudRenderer {
     const s = Math.min(this.sceneWidth, this.sceneHeight) * 0.35 / span;
     this._scaleFactor = s;
 
-    // Transform positions: (x*s, z*s, -y*s) for Three.js Y-up
+    // Auto-detect up axis: the axis with smallest variance is height
+    // Remap so that axis becomes Three.js Y (up)
+    const sampleStep = Math.max(1, Math.floor(N / 2000));
+    let sx = 0, sy = 0, sz = 0, sx2 = 0, sy2 = 0, sz2 = 0, cnt = 0;
+    for (let i = 0; i < N; i += sampleStep) {
+      const px = posAttr.getX(i), py = posAttr.getY(i), pz = posAttr.getZ(i);
+      sx += px; sy += py; sz += pz;
+      sx2 += px * px; sy2 += py * py; sz2 += pz * pz;
+      cnt++;
+    }
+    const varX = sx2 / cnt - (sx / cnt) ** 2;
+    const varY = sy2 / cnt - (sy / cnt) ** 2;
+    const varZ = sz2 / cnt - (sz / cnt) ** 2;
+    const minVar = Math.min(varX, varY, varZ);
+
     const positions = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) {
-      const x = posAttr.getX(i);
-      const y = posAttr.getY(i);
-      const z = posAttr.getZ(i);
-      positions[i * 3]     = x * s;
-      positions[i * 3 + 1] = z * s;
-      positions[i * 3 + 2] = -y * s;
+    if (minVar === varY) {
+      // Y is up — standard CV convention: (x, -y, -z)
+      console.log('[PointCloud] Detected Y-up (CV convention)');
+      for (let i = 0; i < N; i++) {
+        positions[i * 3]     =  posAttr.getX(i) * s;
+        positions[i * 3 + 1] = -posAttr.getY(i) * s;
+        positions[i * 3 + 2] = -posAttr.getZ(i) * s;
+      }
+    } else if (minVar === varZ) {
+      // Z is up: (x, z, -y)
+      console.log('[PointCloud] Detected Z-up');
+      for (let i = 0; i < N; i++) {
+        positions[i * 3]     =  posAttr.getX(i) * s;
+        positions[i * 3 + 1] =  posAttr.getZ(i) * s;
+        positions[i * 3 + 2] = -posAttr.getY(i) * s;
+      }
+    } else {
+      // X is up: (y, x, z)
+      console.log('[PointCloud] Detected X-up');
+      for (let i = 0; i < N; i++) {
+        positions[i * 3]     =  posAttr.getY(i) * s;
+        positions[i * 3 + 1] =  posAttr.getX(i) * s;
+        positions[i * 3 + 2] =  posAttr.getZ(i) * s;
+      }
     }
 
     // Process colors with saturation boost + gamma
@@ -124,8 +156,10 @@ export class PointCloudRenderer {
     }
     this._center = { x: cx / N, y: cy / N, z: cz / N };
 
-    // Initialize points mesh
+    // Initialize points mesh with smaller point size for dense PLY
     this._initPoints();
+    this._material.size = PLY_POINT_SIZE;
+    this._material.opacity = 0.85;
     this._geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     this._geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     this._geometry.computeBoundingSphere();
