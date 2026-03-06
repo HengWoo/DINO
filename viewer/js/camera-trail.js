@@ -69,6 +69,52 @@ export class CameraTrail {
     this.scene.add(this.axesHelper);
   }
 
+  /**
+   * Realign trail positions to fit inside a point cloud's bounding box.
+   * Scales and translates the trail's XZ footprint to match the cloud's XZ footprint,
+   * and sets Y to the cloud's vertical center.
+   */
+  realignToCloud(bounds, center) {
+    if (!this._positions.length || !bounds) return;
+
+    // Compute trail's current XZ bounding box
+    let tMinX = Infinity, tMaxX = -Infinity, tMinZ = Infinity, tMaxZ = -Infinity;
+    for (const p of this._positions) {
+      if (p.x < tMinX) tMinX = p.x; if (p.x > tMaxX) tMaxX = p.x;
+      if (p.z < tMinZ) tMinZ = p.z; if (p.z > tMaxZ) tMaxZ = p.z;
+    }
+    const tSpanX = tMaxX - tMinX || 1;
+    const tSpanZ = tMaxZ - tMinZ || 1;
+    const tCenterX = (tMinX + tMaxX) / 2;
+    const tCenterZ = (tMinZ + tMaxZ) / 2;
+
+    // Cloud XZ footprint (shrink slightly so trail sits inside)
+    const cSpanX = (bounds.max.x - bounds.min.x) * 0.7;
+    const cSpanZ = (bounds.max.z - bounds.min.z) * 0.7;
+    const scaleXZ = Math.min(cSpanX / tSpanX, cSpanZ / tSpanZ);
+
+    for (const p of this._positions) {
+      p.x = center.x + (p.x - tCenterX) * scaleXZ;
+      p.z = center.z + (p.z - tCenterZ) * scaleXZ;
+      p.y = center.y; // place trail at cloud's vertical center
+    }
+
+    // Rebuild trail line geometry
+    if (this.trailLine) {
+      this.trailLine.geometry.dispose();
+      this.trailLine.geometry = new THREE.BufferGeometry().setFromPoints(this._positions);
+    }
+    // Reset arrow + axes to first position
+    if (this.arrow && this._positions[0]) {
+      this.arrow.position.copy(this._positions[0]);
+      this.arrow.position.y += this.arrowSize;
+    }
+    if (this.axesHelper && this._positions[0]) {
+      this.axesHelper.position.copy(this._positions[0]);
+    }
+    console.log(`[CameraTrail] Realigned to cloud: scaleXZ=${scaleXZ.toFixed(2)}`);
+  }
+
   updateFrame(frameIdx) {
     if (!this._positions.length) return;
     const idx = Math.min(frameIdx, this._positions.length - 1);

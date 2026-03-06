@@ -147,14 +147,18 @@ export class PointCloudRenderer {
       }
     }
 
-    // Compute center in transformed coords
+    // Compute center and bounds in transformed coords
     let cx = 0, cy = 0, cz = 0;
+    let mnX = Infinity, mxX = -Infinity, mnY = Infinity, mxY = -Infinity, mnZ = Infinity, mxZ = -Infinity;
     for (let i = 0; i < N; i++) {
-      cx += positions[i * 3];
-      cy += positions[i * 3 + 1];
-      cz += positions[i * 3 + 2];
+      const px = positions[i * 3], py = positions[i * 3 + 1], pz = positions[i * 3 + 2];
+      cx += px; cy += py; cz += pz;
+      if (px < mnX) mnX = px; if (px > mxX) mxX = px;
+      if (py < mnY) mnY = py; if (py > mxY) mxY = py;
+      if (pz < mnZ) mnZ = pz; if (pz > mxZ) mxZ = pz;
     }
     this._center = { x: cx / N, y: cy / N, z: cz / N };
+    this._bounds = { min: { x: mnX, y: mnY, z: mnZ }, max: { x: mxX, y: mxY, z: mxZ } };
 
     // Initialize points mesh with smaller point size for dense PLY
     this._initPoints();
@@ -400,6 +404,10 @@ export class PointCloudRenderer {
 
   get center() {
     return this._center;
+  }
+
+  get bounds() {
+    return this._bounds;
   }
 
   dispose() {

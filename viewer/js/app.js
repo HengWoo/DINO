@@ -51,13 +51,16 @@ function positionCameraOnCloud(renderer, bundle, sceneSpan) {
   }
 }
 
-async function loadPointCloud(renderer, bundle, sceneSpan, signal) {
+async function loadPointCloud(renderer, bundle, sceneSpan, signal, trail) {
   let loadError = null;
   try {
     const plyUrl = await probeVideoUrl('point_cloud.ply');
     if (plyUrl && !signal.aborted && renderer) {
       await renderer.loadPLY(plyUrl);
-      if (!signal.aborted) positionCameraOnCloud(renderer, bundle, sceneSpan);
+      if (!signal.aborted) {
+        positionCameraOnCloud(renderer, bundle, sceneSpan);
+        if (trail && renderer.bounds) trail.realignToCloud(renderer.bounds, renderer.center);
+      }
       return;
     }
   } catch (err) {
@@ -166,7 +169,7 @@ async function initViewer(data) {
       disposables.push(cloudObjectRenderer);
 
       // Try PLY first (SLAM3R/COLMAP dense output), then .bin (legacy)
-      loadPointCloud(pointCloudRenderer, cloudBundle, sceneSpan, signal)
+      loadPointCloud(pointCloudRenderer, cloudBundle, sceneSpan, signal, cloudTrail)
         .catch(err => console.error('[PointCloud] Unexpected error:', err));
     }
 
