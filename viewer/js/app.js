@@ -43,19 +43,28 @@ function cleanup() {
 function positionCameraOnCloud(renderer, bundle, sceneSpan) {
   const c = renderer.center;
   if (c && bundle) {
-    bundle.camera.position.set(c.x, c.y + sceneSpan * 0.4, c.z + sceneSpan * 0.3);
+    // Foxglove-style 3/4 elevated view: mostly above, slightly behind
+    const d = sceneSpan * 0.8;
+    bundle.camera.position.set(c.x + d * 0.2, c.y + d * 0.8, c.z + d * 0.4);
     bundle.controls.target.set(c.x, c.y, c.z);
     bundle.controls.update();
   }
 }
 
-async function loadPointCloud(renderer, bundle, sceneSpan, signal) {
+async function loadPointCloud(renderer, bundle, sceneSpan, signal, trail) {
   let loadError = null;
   try {
     const plyUrl = await probeVideoUrl('point_cloud.ply');
     if (plyUrl && !signal.aborted && renderer) {
       await renderer.loadPLY(plyUrl);
-      if (!signal.aborted) positionCameraOnCloud(renderer, bundle, sceneSpan);
+      if (!signal.aborted) {
+        positionCameraOnCloud(renderer, bundle, sceneSpan);
+        try {
+          if (trail && renderer.bounds) trail.realignToCloud(renderer.bounds, renderer.center);
+        } catch (trailErr) {
+          console.warn('[CameraTrail] Failed to realign trail to cloud:', trailErr.message);
+        }
+      }
       return;
     }
   } catch (err) {
@@ -67,6 +76,10 @@ async function loadPointCloud(renderer, bundle, sceneSpan, signal) {
     if (binUrl && !signal.aborted && renderer) {
       await renderer.loadBinary(binUrl);
       if (!signal.aborted) positionCameraOnCloud(renderer, bundle, sceneSpan);
+      if (loadError) {
+        const status = document.getElementById('status');
+        if (status) status.textContent += ' | PLY failed, using legacy point cloud';
+      }
       return;
     }
   } catch (err) {
@@ -164,7 +177,7 @@ async function initViewer(data) {
       disposables.push(cloudObjectRenderer);
 
       // Try PLY first (SLAM3R/COLMAP dense output), then .bin (legacy)
-      loadPointCloud(pointCloudRenderer, cloudBundle, sceneSpan, signal)
+      loadPointCloud(pointCloudRenderer, cloudBundle, sceneSpan, signal, cloudTrail)
         .catch(err => console.error('[PointCloud] Unexpected error:', err));
     }
 

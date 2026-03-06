@@ -1,13 +1,15 @@
 /**
  * Point cloud renderer for the 3D depth panel.
- * Loads binary .bin files and renders accumulated per-frame point clouds.
- * Supports V2 format with per-vertex RGB colors (magic 0x44494E4F).
+ * Loads PLY files (SLAM3R/COLMAP dense output) or binary .bin files
+ * with accumulated per-frame point clouds.
+ * Supports V2 binary format with per-vertex RGB colors (magic 0x44494E4F).
  */
 import * as THREE from 'three';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 
 const FALLBACK_COLOR = [56 / 255, 189 / 255, 248 / 255]; // sky-400
 const POINT_SIZE = 3;
+const PLY_POINT_SIZE = 1;
 const ACCUMULATE_FRAMES = 60; // keep last N frames for dense reconstruction
 const SAT_BOOST = 1.3;
 const GAMMA = 0.85;
@@ -31,6 +33,7 @@ export class PointCloudRenderer {
     this._hasRgb = false;
     this._headerSize = 8; // legacy default
     this._center = null; // {x, y, z} in scaled Three.js coords
+    this._bounds = null; // {min: {x,y,z}, max: {x,y,z}} in scaled coords
     this._isPLY = false;
   }
 
@@ -64,6 +67,7 @@ export class PointCloudRenderer {
     if (N === 0) {
       console.warn('[PointCloud] PLY file contains no points');
       this._center = { x: 0, y: 0, z: 0 };
+      this._bounds = { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } };
       return;
     }
 
@@ -79,15 +83,52 @@ export class PointCloudRenderer {
     const s = Math.min(this.sceneWidth, this.sceneHeight) * 0.35 / span;
     this._scaleFactor = s;
 
-    // Transform positions: (x*s, z*s, -y*s) for Three.js Y-up
+    // Auto-detect up axis: heuristic assumes the axis with smallest variance
+    // is the vertical (thinnest) dimension in SLAM reconstructions.
+    // Remap that axis to Three.js Y (up).
+    const sampleStep = Math.max(1, Math.floor(N / 2000));
+    let sx = 0, sy = 0, sz = 0, sx2 = 0, sy2 = 0, sz2 = 0, cnt = 0;
+    for (let i = 0; i < N; i += sampleStep) {
+      const px = posAttr.getX(i), py = posAttr.getY(i), pz = posAttr.getZ(i);
+      sx += px; sy += py; sz += pz;
+      sx2 += px * px; sy2 += py * py; sz2 += pz * pz;
+      cnt++;
+    }
+    const varX = sx2 / cnt - (sx / cnt) ** 2;
+    const varY = sy2 / cnt - (sy / cnt) ** 2;
+    const varZ = sz2 / cnt - (sz / cnt) ** 2;
+    const minVar = Math.min(varX, varY, varZ);
+    const maxVar = Math.max(varX, varY, varZ);
+    console.log(`[PointCloud] Axis variance: X=${varX.toFixed(3)}, Y=${varY.toFixed(3)}, Z=${varZ.toFixed(3)}`);
+    if (minVar > 0 && maxVar / minVar < 1.5) {
+      console.warn('[PointCloud] Axis detection low confidence: variances are similar, defaulting to Y-up');
+    }
+
     const positions = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) {
-      const x = posAttr.getX(i);
-      const y = posAttr.getY(i);
-      const z = posAttr.getZ(i);
-      positions[i * 3]     = x * s;
-      positions[i * 3 + 1] = z * s;
-      positions[i * 3 + 2] = -y * s;
+    if (minVar === varY) {
+      // Y has smallest variance — assume CV Y-down convention: flip Y and Z for Three.js Y-up
+      console.log('[PointCloud] Detected Y-up (CV convention)');
+      for (let i = 0; i < N; i++) {
+        positions[i * 3]     =  posAttr.getX(i) * s;
+        positions[i * 3 + 1] = -posAttr.getY(i) * s;
+        positions[i * 3 + 2] = -posAttr.getZ(i) * s;
+      }
+    } else if (minVar === varZ) {
+      // Z has smallest variance: remap (x, z, -y)
+      console.log('[PointCloud] Detected Z-up');
+      for (let i = 0; i < N; i++) {
+        positions[i * 3]     =  posAttr.getX(i) * s;
+        positions[i * 3 + 1] =  posAttr.getZ(i) * s;
+        positions[i * 3 + 2] = -posAttr.getY(i) * s;
+      }
+    } else {
+      // X has smallest variance (uncommon — catch-all fallback): remap (y, x, z)
+      console.log('[PointCloud] Detected X-up');
+      for (let i = 0; i < N; i++) {
+        positions[i * 3]     =  posAttr.getY(i) * s;
+        positions[i * 3 + 1] =  posAttr.getX(i) * s;
+        positions[i * 3 + 2] =  posAttr.getZ(i) * s;
+      }
     }
 
     // Process colors with saturation boost + gamma
@@ -115,17 +156,23 @@ export class PointCloudRenderer {
       }
     }
 
-    // Compute center in transformed coords
+    // Compute center and bounds in transformed coords
     let cx = 0, cy = 0, cz = 0;
+    let mnX = Infinity, mxX = -Infinity, mnY = Infinity, mxY = -Infinity, mnZ = Infinity, mxZ = -Infinity;
     for (let i = 0; i < N; i++) {
-      cx += positions[i * 3];
-      cy += positions[i * 3 + 1];
-      cz += positions[i * 3 + 2];
+      const px = positions[i * 3], py = positions[i * 3 + 1], pz = positions[i * 3 + 2];
+      cx += px; cy += py; cz += pz;
+      if (px < mnX) mnX = px; if (px > mxX) mxX = px;
+      if (py < mnY) mnY = py; if (py > mxY) mxY = py;
+      if (pz < mnZ) mnZ = pz; if (pz > mxZ) mxZ = pz;
     }
     this._center = { x: cx / N, y: cy / N, z: cz / N };
+    this._bounds = { min: { x: mnX, y: mnY, z: mnZ }, max: { x: mxX, y: mxY, z: mxZ } };
 
-    // Initialize points mesh
+    // Initialize points mesh with smaller point size for dense PLY
     this._initPoints();
+    this._material.size = PLY_POINT_SIZE;
+    this._material.opacity = 0.85;
     this._geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     this._geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     this._geometry.computeBoundingSphere();
@@ -366,6 +413,10 @@ export class PointCloudRenderer {
 
   get center() {
     return this._center;
+  }
+
+  get bounds() {
+    return this._bounds;
   }
 
   dispose() {

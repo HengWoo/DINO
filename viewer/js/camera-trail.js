@@ -69,6 +69,57 @@ export class CameraTrail {
     this.scene.add(this.axesHelper);
   }
 
+  /**
+   * Realign trail positions to fit within ~70% of a point cloud's XZ footprint,
+   * flattened to the cloud's vertical center (trail has no reliable elevation data).
+   */
+  realignToCloud(bounds, center) {
+    if (!this._positions.length || !bounds || !center) return;
+
+    // Compute trail's current XZ bounding box
+    let tMinX = Infinity, tMaxX = -Infinity, tMinZ = Infinity, tMaxZ = -Infinity;
+    for (const p of this._positions) {
+      if (p.x < tMinX) tMinX = p.x; if (p.x > tMaxX) tMaxX = p.x;
+      if (p.z < tMinZ) tMinZ = p.z; if (p.z > tMaxZ) tMaxZ = p.z;
+    }
+    const tSpanX = tMaxX - tMinX || 1;
+    const tSpanZ = tMaxZ - tMinZ || 1;
+    const tCenterX = (tMinX + tMaxX) / 2;
+    const tCenterZ = (tMinZ + tMaxZ) / 2;
+
+    // Cloud XZ footprint (shrink so trail sits inside)
+    const cSpanX = (bounds.max.x - bounds.min.x) * 0.7 || 1;
+    const cSpanZ = (bounds.max.z - bounds.min.z) * 0.7 || 1;
+    const scaleXZ = Math.min(cSpanX / tSpanX, cSpanZ / tSpanZ);
+
+    if (!isFinite(scaleXZ) || scaleXZ < 1e-6) {
+      console.warn('[CameraTrail] realignToCloud: degenerate cloud bounds, skipping');
+      return;
+    }
+
+    for (const p of this._positions) {
+      p.x = center.x + (p.x - tCenterX) * scaleXZ;
+      p.z = center.z + (p.z - tCenterZ) * scaleXZ;
+      p.y = center.y;
+    }
+
+    // Rebuild trail line geometry, preserving progressive reveal draw range
+    if (this.trailLine) {
+      const currentCount = this.trailLine.geometry.drawRange.count;
+      this.trailLine.geometry.dispose();
+      this.trailLine.geometry = new THREE.BufferGeometry().setFromPoints(this._positions);
+      this.trailLine.geometry.setDrawRange(0, currentCount);
+    }
+    if (this.arrow) {
+      this.arrow.position.copy(this._positions[0]);
+      this.arrow.position.y += this.arrowSize;
+    }
+    if (this.axesHelper) {
+      this.axesHelper.position.copy(this._positions[0]);
+    }
+    console.log(`[CameraTrail] Realigned to cloud: scaleXZ=${scaleXZ.toFixed(2)}`);
+  }
+
   updateFrame(frameIdx) {
     if (!this._positions.length) return;
     const idx = Math.min(frameIdx, this._positions.length - 1);
