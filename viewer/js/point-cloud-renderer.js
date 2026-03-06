@@ -4,10 +4,13 @@
  * Supports V2 format with per-vertex RGB colors (magic 0x44494E4F).
  */
 import * as THREE from 'three';
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 
 const FALLBACK_COLOR = [56 / 255, 189 / 255, 248 / 255]; // sky-400
 const POINT_SIZE = 3;
 const ACCUMULATE_FRAMES = 60; // keep last N frames for dense reconstruction
+const SAT_BOOST = 1.3;
+const GAMMA = 0.85;
 
 const MAGIC_V2 = 0x44494E4F; // "DINO" in little-endian
 
@@ -28,6 +31,7 @@ export class PointCloudRenderer {
     this._hasRgb = false;
     this._headerSize = 8; // legacy default
     this._center = null; // {x, y, z} in scaled Three.js coords
+    this._isPLY = false;
   }
 
   async loadBinary(url) {
@@ -40,6 +44,94 @@ export class PointCloudRenderer {
     console.log('[PointCloud] Frames:', this.numFrames, 'RGB:', this._hasRgb);
     this._computeScale();
     this._initPoints();
+  }
+
+  async loadPLY(url) {
+    console.log('[PointCloud] Loading PLY:', url);
+    const loader = new PLYLoader();
+    const geometry = await new Promise((resolve, reject) => {
+      loader.load(url, resolve, undefined, reject);
+    });
+
+    const posAttr = geometry.getAttribute('position');
+    if (!posAttr) {
+      throw new Error('PLY file has no vertex position data — file may be corrupt');
+    }
+    const colAttr = geometry.getAttribute('color');
+    const N = posAttr.count;
+    console.log(`[PointCloud] PLY loaded: ${N} points, hasColor: ${!!colAttr}`);
+
+    if (N === 0) {
+      console.warn('[PointCloud] PLY file contains no points');
+      this._center = { x: 0, y: 0, z: 0 };
+      return;
+    }
+
+    // Compute bounding box for auto-scale
+    geometry.computeBoundingBox();
+    const bb = geometry.boundingBox;
+    const span = Math.max(
+      bb.max.x - bb.min.x,
+      bb.max.y - bb.min.y,
+      bb.max.z - bb.min.z,
+      0.01
+    );
+    const s = Math.min(this.sceneWidth, this.sceneHeight) * 0.35 / span;
+    this._scaleFactor = s;
+
+    // Transform positions: (x*s, z*s, -y*s) for Three.js Y-up
+    const positions = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const x = posAttr.getX(i);
+      const y = posAttr.getY(i);
+      const z = posAttr.getZ(i);
+      positions[i * 3]     = x * s;
+      positions[i * 3 + 1] = z * s;
+      positions[i * 3 + 2] = -y * s;
+    }
+
+    // Process colors with saturation boost + gamma
+    const colors = new Float32Array(N * 3);
+    if (colAttr) {
+      for (let i = 0; i < N; i++) {
+        let r = colAttr.getX(i);
+        let g = colAttr.getY(i);
+        let b = colAttr.getZ(i);
+        // Saturation boost
+        const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+        r = Math.min(1, gray + (r - gray) * SAT_BOOST);
+        g = Math.min(1, gray + (g - gray) * SAT_BOOST);
+        b = Math.min(1, gray + (b - gray) * SAT_BOOST);
+        // Gamma correction
+        colors[i * 3]     = Math.pow(Math.max(0, r), GAMMA);
+        colors[i * 3 + 1] = Math.pow(Math.max(0, g), GAMMA);
+        colors[i * 3 + 2] = Math.pow(Math.max(0, b), GAMMA);
+      }
+    } else {
+      for (let i = 0; i < N * 3; i += 3) {
+        colors[i]     = FALLBACK_COLOR[0];
+        colors[i + 1] = FALLBACK_COLOR[1];
+        colors[i + 2] = FALLBACK_COLOR[2];
+      }
+    }
+
+    // Compute center in transformed coords
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < N; i++) {
+      cx += positions[i * 3];
+      cy += positions[i * 3 + 1];
+      cz += positions[i * 3 + 2];
+    }
+    this._center = { x: cx / N, y: cy / N, z: cz / N };
+
+    // Initialize points mesh
+    this._initPoints();
+    this._geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    this._geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    this._geometry.computeBoundingSphere();
+
+    this._isPLY = true;
+    console.log(`[PointCloud] PLY ready: scale=${s.toFixed(2)}, center=(${this._center.x.toFixed(0)}, ${this._center.y.toFixed(0)}, ${this._center.z.toFixed(0)})`);
   }
 
   _parseIndex() {
@@ -123,6 +215,11 @@ export class PointCloudRenderer {
   }
 
   _initPoints() {
+    // Clean up previous mesh if re-initializing (e.g., switching PLY → BIN)
+    if (this.points) this.scene.remove(this.points);
+    if (this._geometry) this._geometry.dispose();
+    if (this._material) this._material.dispose();
+
     this._material = new THREE.PointsMaterial({
       size: POINT_SIZE,
       vertexColors: true,
@@ -198,6 +295,7 @@ export class PointCloudRenderer {
    * Update point cloud — accumulate last N frames for dense reconstruction.
    */
   updateFrame(frameIdx) {
+    if (this._isPLY) return; // static PLY — no per-frame updates
     if (!this.buffer || !this.frameIndex.length || !this._geometry) return;
     const idx = Math.min(frameIdx, this.frameIndex.length - 1);
     if (idx === this._lastIdx) return;
