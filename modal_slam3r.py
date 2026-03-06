@@ -103,7 +103,10 @@ def run_slam3r(video_bytes: bytes, video_name: str = "input.mp4"):
     if result.returncode != 0:
         print(f"SLAM3R stdout: {result.stdout[-3000:]}")
         print(f"SLAM3R stderr: {result.stderr[-3000:]}")
-        raise RuntimeError(f"SLAM3R reconstruction failed (exit {result.returncode})")
+        raise RuntimeError(
+            f"SLAM3R reconstruction failed (exit {result.returncode}): "
+            f"{result.stderr[-500:]}"
+        )
     print("[3/3] SLAM3R reconstruction done")
 
     # Find the output PLY (SLAM3R outputs *_recon.ply in results/)
