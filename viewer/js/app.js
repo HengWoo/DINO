@@ -40,6 +40,37 @@ function cleanup() {
   }
 }
 
+function positionCameraOnCloud(renderer, bundle, sceneSpan) {
+  const c = renderer.center;
+  if (c && bundle) {
+    bundle.camera.position.set(c.x, c.y + sceneSpan * 0.4, c.z + sceneSpan * 0.3);
+    bundle.controls.target.set(c.x, c.y, c.z);
+    bundle.controls.update();
+  }
+}
+
+async function loadPointCloud(renderer, bundle, sceneSpan, signal) {
+  try {
+    const plyUrl = await probeVideoUrl('point_cloud.ply');
+    if (plyUrl && !signal.aborted && renderer) {
+      await renderer.loadPLY(plyUrl);
+      if (!signal.aborted) positionCameraOnCloud(renderer, bundle, sceneSpan);
+      return;
+    }
+  } catch (err) {
+    console.warn('[PointCloud] PLY probe/load failed:', err.message);
+  }
+  try {
+    const binUrl = await probeVideoUrl('point_clouds.bin');
+    if (binUrl && !signal.aborted && renderer) {
+      await renderer.loadBinary(binUrl);
+      if (!signal.aborted) positionCameraOnCloud(renderer, bundle, sceneSpan);
+    }
+  } catch (err) {
+    console.warn('[PointCloud] BIN probe/load failed:', err.message);
+  }
+}
+
 async function initViewer(data) {
   cleanup();
   abortController = new AbortController();
@@ -124,24 +155,8 @@ async function initViewer(data) {
       cloudObjectRenderer = new CloudObjectRenderer(cloudBundle.scene, 1);
       disposables.push(cloudObjectRenderer);
 
-      probeVideoUrl('point_clouds.bin').then(url => {
-        if (url && !signal.aborted && pointCloudRenderer) {
-          pointCloudRenderer.loadBinary(url).then(() => {
-            if (signal.aborted) return;
-            // Reposition camera to center on point cloud
-            const c = pointCloudRenderer.center;
-            if (c && cloudBundle) {
-              cloudBundle.camera.position.set(c.x, c.y + sceneSpan * 0.4, c.z + sceneSpan * 0.3);
-              cloudBundle.controls.target.set(c.x, c.y, c.z);
-              cloudBundle.controls.update();
-            }
-          }).catch(err => {
-            console.error('[PointCloud] Load failed:', err);
-          });
-        }
-      }).catch(err => {
-        console.warn('[PointCloud] Probe failed:', err.message);
-      });
+      // Try PLY first (SLAM3R/COLMAP dense output), then .bin (legacy)
+      loadPointCloud(pointCloudRenderer, cloudBundle, sceneSpan, signal);
     }
 
     // --- UI elements ---
