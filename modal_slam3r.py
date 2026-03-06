@@ -63,7 +63,8 @@ def run_slam3r(video_bytes: bytes, video_name: str = "input.mp4"):
         shutil.rmtree(work)
     work.mkdir(parents=True)
 
-    # 1. Save video
+    # 1. Save video (sanitize filename to prevent path traversal)
+    video_name = Path(video_name).name or "input.mp4"
     video_path = work / video_name
     video_path.write_bytes(video_bytes)
     print(f"[1/3] Video saved: {len(video_bytes) / 1024 / 1024:.1f}MB")
@@ -71,16 +72,25 @@ def run_slam3r(video_bytes: bytes, video_name: str = "input.mp4"):
     # 2. Extract frames (5fps, 800px wide)
     frames_dir = work / "frames"
     frames_dir.mkdir()
-    subprocess.run([
-        "ffmpeg", "-i", str(video_path),
-        "-vf", "fps=5,scale=800:-2",
-        "-q:v", "2",
-        str(frames_dir / "frame_%04d.jpg"),
-    ], check=True, capture_output=True)
+    try:
+        subprocess.run([
+            "ffmpeg", "-i", str(video_path),
+            "-vf", "fps=5,scale=800:-2",
+            "-q:v", "2",
+            str(frames_dir / "frame_%04d.jpg"),
+        ], check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        print(f"ffmpeg stderr: {e.stderr[-2000:]}")
+        raise RuntimeError(f"Frame extraction failed: {e.stderr[-500:]}") from e
     n = len(list(frames_dir.glob("*.jpg")))
     print(f"[2/3] Extracted {n} frames")
 
-    # 3. Run SLAM3R reconstruction
+    # 3. Clean stale results from previous runs
+    results_dir = Path("/opt/slam3r/results")
+    if results_dir.exists():
+        shutil.rmtree(results_dir)
+
+    # Run SLAM3R reconstruction
     result = subprocess.run([
         "python", "/opt/slam3r/recon.py",
         "--img_dir", str(frames_dir),
@@ -102,10 +112,17 @@ def run_slam3r(video_bytes: bytes, video_name: str = "input.mp4"):
         + glob.glob(str(work / "**/*_recon.ply"), recursive=True)
         + glob.glob("/opt/slam3r/results/**/*.ply", recursive=True)
     )
+    print(f"[SLAM3R] PLY search found {len(ply_candidates)} candidates: {ply_candidates}")
     if not ply_candidates:
-        raise RuntimeError("SLAM3R did not produce a PLY file")
+        raise RuntimeError(
+            "SLAM3R did not produce a PLY file. "
+            "Searched: /opt/slam3r/results/**/*_recon.ply, "
+            f"{work}/**/*_recon.ply, /opt/slam3r/results/**/*.ply"
+        )
 
     ply_path = Path(ply_candidates[0])
+    if len(ply_candidates) > 1:
+        print(f"[SLAM3R] Multiple PLY files found, using first: {ply_path}")
     out_bytes = ply_path.read_bytes()
     print(f"Result: {ply_path.name} ({len(out_bytes) / 1024 / 1024:.1f}MB)")
 

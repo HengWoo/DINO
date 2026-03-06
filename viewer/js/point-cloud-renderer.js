@@ -54,9 +54,18 @@ export class PointCloudRenderer {
     });
 
     const posAttr = geometry.getAttribute('position');
+    if (!posAttr) {
+      throw new Error('PLY file has no vertex position data — file may be corrupt');
+    }
     const colAttr = geometry.getAttribute('color');
     const N = posAttr.count;
     console.log(`[PointCloud] PLY loaded: ${N} points, hasColor: ${!!colAttr}`);
+
+    if (N === 0) {
+      console.warn('[PointCloud] PLY file contains no points');
+      this._center = { x: 0, y: 0, z: 0 };
+      return;
+    }
 
     // Compute bounding box for auto-scale
     geometry.computeBoundingBox();
@@ -206,6 +215,11 @@ export class PointCloudRenderer {
   }
 
   _initPoints() {
+    // Clean up previous mesh if re-initializing (e.g., switching PLY → BIN)
+    if (this.points) this.scene.remove(this.points);
+    if (this._geometry) this._geometry.dispose();
+    if (this._material) this._material.dispose();
+
     this._material = new THREE.PointsMaterial({
       size: POINT_SIZE,
       vertexColors: true,

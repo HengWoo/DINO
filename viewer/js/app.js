@@ -50,6 +50,7 @@ function positionCameraOnCloud(renderer, bundle, sceneSpan) {
 }
 
 async function loadPointCloud(renderer, bundle, sceneSpan, signal) {
+  let loadError = null;
   try {
     const plyUrl = await probeVideoUrl('point_cloud.ply');
     if (plyUrl && !signal.aborted && renderer) {
@@ -58,16 +59,23 @@ async function loadPointCloud(renderer, bundle, sceneSpan, signal) {
       return;
     }
   } catch (err) {
-    console.warn('[PointCloud] PLY probe/load failed:', err.message);
+    loadError = err;
+    console.error('[PointCloud] PLY load failed:', err);
   }
   try {
     const binUrl = await probeVideoUrl('point_clouds.bin');
     if (binUrl && !signal.aborted && renderer) {
       await renderer.loadBinary(binUrl);
       if (!signal.aborted) positionCameraOnCloud(renderer, bundle, sceneSpan);
+      return;
     }
   } catch (err) {
-    console.warn('[PointCloud] BIN probe/load failed:', err.message);
+    loadError = err;
+    console.error('[PointCloud] BIN load failed:', err);
+  }
+  if (loadError) {
+    const status = document.getElementById('status');
+    if (status) status.textContent += ' | Point cloud unavailable';
   }
 }
 
@@ -156,7 +164,8 @@ async function initViewer(data) {
       disposables.push(cloudObjectRenderer);
 
       // Try PLY first (SLAM3R/COLMAP dense output), then .bin (legacy)
-      loadPointCloud(pointCloudRenderer, cloudBundle, sceneSpan, signal);
+      loadPointCloud(pointCloudRenderer, cloudBundle, sceneSpan, signal)
+        .catch(err => console.error('[PointCloud] Unexpected error:', err));
     }
 
     // --- UI elements ---

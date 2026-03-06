@@ -50,7 +50,8 @@ def run_colmap_dense(video_bytes: bytes, video_name: str = "input.mp4"):
         shutil.rmtree(work)
     work.mkdir(parents=True)
 
-    # 1. Save video
+    # 1. Save video (sanitize filename to prevent path traversal)
+    video_name = Path(video_name).name or "input.mp4"
     video_path = work / video_name
     video_path.write_bytes(video_bytes)
     print(f"[1/7] Video saved: {len(video_bytes) / 1024 / 1024:.1f}MB")
@@ -58,12 +59,16 @@ def run_colmap_dense(video_bytes: bytes, video_name: str = "input.mp4"):
     # 2. Extract frames (5fps, 800px wide)
     input_dir = work / "images"
     input_dir.mkdir()
-    subprocess.run([
-        "ffmpeg", "-i", str(video_path),
-        "-vf", "fps=5,scale=800:-2",
-        "-q:v", "2",
-        str(input_dir / "frame_%04d.jpg"),
-    ], check=True, capture_output=True)
+    try:
+        subprocess.run([
+            "ffmpeg", "-i", str(video_path),
+            "-vf", "fps=5,scale=800:-2",
+            "-q:v", "2",
+            str(input_dir / "frame_%04d.jpg"),
+        ], check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        print(f"ffmpeg stderr: {e.stderr[-2000:]}")
+        raise RuntimeError(f"Frame extraction failed: {e.stderr[-500:]}") from e
     n = len(list(input_dir.glob("*.jpg")))
     print(f"[2/7] Extracted {n} frames")
 
@@ -147,8 +152,14 @@ def _run_colmap(command: str, args: list, label: str):
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        print(f"{label} stderr: {result.stderr[-3000:]}")
-        raise RuntimeError(f"COLMAP {command} failed (exit {result.returncode})")
+        print(f"{label} stdout: {result.stdout[-2000:]}")
+        print(f"{label} stderr: {result.stderr[-2000:]}")
+        raise RuntimeError(
+            f"COLMAP {command} failed (exit {result.returncode}): "
+            f"{result.stderr[-500:]}"
+        )
+    if result.stderr:
+        print(f"{label} warnings: {result.stderr[-1000:]}")
 
 
 @app.local_entrypoint()
