@@ -14,7 +14,7 @@ app = modal.App("slam3r")
 slam3r_image = (
     modal.Image.from_registry("nvidia/cuda:11.8.0-devel-ubuntu22.04", add_python="3.11")
     .apt_install("git", "ffmpeg", "g++", "ninja-build", "cmake")
-    .env({"TORCH_CUDA_ARCH_LIST": "8.0", "CUDA_HOME": "/usr/local/cuda"})
+    .env({"TORCH_CUDA_ARCH_LIST": "8.0", "CUDA_HOME": "/usr/local/cuda", "CC": "gcc", "CXX": "g++"})
     .run_commands(
         "pip install torch==2.5.0 torchvision==0.20.0 --index-url https://download.pytorch.org/whl/cu118"
     )
