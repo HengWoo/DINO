@@ -98,7 +98,11 @@ export class PointCloudRenderer {
     const varY = sy2 / cnt - (sy / cnt) ** 2;
     const varZ = sz2 / cnt - (sz / cnt) ** 2;
     const minVar = Math.min(varX, varY, varZ);
+    const maxVar = Math.max(varX, varY, varZ);
     console.log(`[PointCloud] Axis variance: X=${varX.toFixed(3)}, Y=${varY.toFixed(3)}, Z=${varZ.toFixed(3)}`);
+    if (minVar > 0 && maxVar / minVar < 1.5) {
+      console.warn('[PointCloud] Axis detection low confidence: variances are similar, defaulting to Y-up');
+    }
 
     const positions = new Float32Array(N * 3);
     if (minVar === varY) {

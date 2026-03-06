@@ -76,6 +76,10 @@ async function loadPointCloud(renderer, bundle, sceneSpan, signal, trail) {
     if (binUrl && !signal.aborted && renderer) {
       await renderer.loadBinary(binUrl);
       if (!signal.aborted) positionCameraOnCloud(renderer, bundle, sceneSpan);
+      if (loadError) {
+        const status = document.getElementById('status');
+        if (status) status.textContent += ' | PLY failed, using legacy point cloud';
+      }
       return;
     }
   } catch (err) {
