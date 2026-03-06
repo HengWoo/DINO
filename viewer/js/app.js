@@ -59,7 +59,11 @@ async function loadPointCloud(renderer, bundle, sceneSpan, signal, trail) {
       await renderer.loadPLY(plyUrl);
       if (!signal.aborted) {
         positionCameraOnCloud(renderer, bundle, sceneSpan);
-        if (trail && renderer.bounds) trail.realignToCloud(renderer.bounds, renderer.center);
+        try {
+          if (trail && renderer.bounds) trail.realignToCloud(renderer.bounds, renderer.center);
+        } catch (trailErr) {
+          console.warn('[CameraTrail] Failed to realign trail to cloud:', trailErr.message);
+        }
       }
       return;
     }

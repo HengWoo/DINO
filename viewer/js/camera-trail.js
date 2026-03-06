@@ -70,12 +70,11 @@ export class CameraTrail {
   }
 
   /**
-   * Realign trail positions to fit inside a point cloud's bounding box.
-   * Scales and translates the trail's XZ footprint to match the cloud's XZ footprint,
-   * and sets Y to the cloud's vertical center.
+   * Realign trail positions to fit within ~70% of a point cloud's XZ footprint,
+   * flattened to the cloud's vertical center (trail has no reliable elevation data).
    */
   realignToCloud(bounds, center) {
-    if (!this._positions.length || !bounds) return;
+    if (!this._positions.length || !bounds || !center) return;
 
     // Compute trail's current XZ bounding box
     let tMinX = Infinity, tMaxX = -Infinity, tMinZ = Infinity, tMaxZ = -Infinity;
@@ -88,28 +87,34 @@ export class CameraTrail {
     const tCenterX = (tMinX + tMaxX) / 2;
     const tCenterZ = (tMinZ + tMaxZ) / 2;
 
-    // Cloud XZ footprint (shrink slightly so trail sits inside)
-    const cSpanX = (bounds.max.x - bounds.min.x) * 0.7;
-    const cSpanZ = (bounds.max.z - bounds.min.z) * 0.7;
+    // Cloud XZ footprint (shrink so trail sits inside)
+    const cSpanX = (bounds.max.x - bounds.min.x) * 0.7 || 1;
+    const cSpanZ = (bounds.max.z - bounds.min.z) * 0.7 || 1;
     const scaleXZ = Math.min(cSpanX / tSpanX, cSpanZ / tSpanZ);
+
+    if (!isFinite(scaleXZ) || scaleXZ < 1e-6) {
+      console.warn('[CameraTrail] realignToCloud: degenerate cloud bounds, skipping');
+      return;
+    }
 
     for (const p of this._positions) {
       p.x = center.x + (p.x - tCenterX) * scaleXZ;
       p.z = center.z + (p.z - tCenterZ) * scaleXZ;
-      p.y = center.y; // place trail at cloud's vertical center
+      p.y = center.y;
     }
 
-    // Rebuild trail line geometry
+    // Rebuild trail line geometry, preserving progressive reveal draw range
     if (this.trailLine) {
+      const currentCount = this.trailLine.geometry.drawRange.count;
       this.trailLine.geometry.dispose();
       this.trailLine.geometry = new THREE.BufferGeometry().setFromPoints(this._positions);
+      this.trailLine.geometry.setDrawRange(0, currentCount);
     }
-    // Reset arrow + axes to first position
-    if (this.arrow && this._positions[0]) {
+    if (this.arrow) {
       this.arrow.position.copy(this._positions[0]);
       this.arrow.position.y += this.arrowSize;
     }
-    if (this.axesHelper && this._positions[0]) {
+    if (this.axesHelper) {
       this.axesHelper.position.copy(this._positions[0]);
     }
     console.log(`[CameraTrail] Realigned to cloud: scaleXZ=${scaleXZ.toFixed(2)}`);

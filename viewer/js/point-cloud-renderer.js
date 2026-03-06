@@ -1,7 +1,8 @@
 /**
  * Point cloud renderer for the 3D depth panel.
- * Loads binary .bin files and renders accumulated per-frame point clouds.
- * Supports V2 format with per-vertex RGB colors (magic 0x44494E4F).
+ * Loads PLY files (SLAM3R/COLMAP dense output) or binary .bin files
+ * with accumulated per-frame point clouds.
+ * Supports V2 binary format with per-vertex RGB colors (magic 0x44494E4F).
  */
 import * as THREE from 'three';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
@@ -32,6 +33,7 @@ export class PointCloudRenderer {
     this._hasRgb = false;
     this._headerSize = 8; // legacy default
     this._center = null; // {x, y, z} in scaled Three.js coords
+    this._bounds = null; // {min: {x,y,z}, max: {x,y,z}} in scaled coords
     this._isPLY = false;
   }
 
@@ -65,6 +67,7 @@ export class PointCloudRenderer {
     if (N === 0) {
       console.warn('[PointCloud] PLY file contains no points');
       this._center = { x: 0, y: 0, z: 0 };
+      this._bounds = { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } };
       return;
     }
 
@@ -80,8 +83,9 @@ export class PointCloudRenderer {
     const s = Math.min(this.sceneWidth, this.sceneHeight) * 0.35 / span;
     this._scaleFactor = s;
 
-    // Auto-detect up axis: the axis with smallest variance is height
-    // Remap so that axis becomes Three.js Y (up)
+    // Auto-detect up axis: heuristic assumes the axis with smallest variance
+    // is the vertical (thinnest) dimension in SLAM reconstructions.
+    // Remap that axis to Three.js Y (up).
     const sampleStep = Math.max(1, Math.floor(N / 2000));
     let sx = 0, sy = 0, sz = 0, sx2 = 0, sy2 = 0, sz2 = 0, cnt = 0;
     for (let i = 0; i < N; i += sampleStep) {
@@ -94,10 +98,11 @@ export class PointCloudRenderer {
     const varY = sy2 / cnt - (sy / cnt) ** 2;
     const varZ = sz2 / cnt - (sz / cnt) ** 2;
     const minVar = Math.min(varX, varY, varZ);
+    console.log(`[PointCloud] Axis variance: X=${varX.toFixed(3)}, Y=${varY.toFixed(3)}, Z=${varZ.toFixed(3)}`);
 
     const positions = new Float32Array(N * 3);
     if (minVar === varY) {
-      // Y is up — standard CV convention: (x, -y, -z)
+      // Y has smallest variance — assume CV Y-down convention: flip Y and Z for Three.js Y-up
       console.log('[PointCloud] Detected Y-up (CV convention)');
       for (let i = 0; i < N; i++) {
         positions[i * 3]     =  posAttr.getX(i) * s;
@@ -105,7 +110,7 @@ export class PointCloudRenderer {
         positions[i * 3 + 2] = -posAttr.getZ(i) * s;
       }
     } else if (minVar === varZ) {
-      // Z is up: (x, z, -y)
+      // Z has smallest variance: remap (x, z, -y)
       console.log('[PointCloud] Detected Z-up');
       for (let i = 0; i < N; i++) {
         positions[i * 3]     =  posAttr.getX(i) * s;
@@ -113,7 +118,7 @@ export class PointCloudRenderer {
         positions[i * 3 + 2] = -posAttr.getY(i) * s;
       }
     } else {
-      // X is up: (y, x, z)
+      // X has smallest variance (uncommon — catch-all fallback): remap (y, x, z)
       console.log('[PointCloud] Detected X-up');
       for (let i = 0; i < N; i++) {
         positions[i * 3]     =  posAttr.getY(i) * s;
